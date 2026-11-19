@@ -200,7 +200,7 @@ Self-hosting OpenShorts is free. You provide the machine and you only pay for th
 ## Requirements
 
 - **Docker & Docker Compose**
-- **Google Gemini API Key** ([Free — get it here](https://aistudio.google.com/app/apikey)) — required for all AI features
+- **Clip Generator** needs a Gemini API key or an OpenAI-compatible provider. Visual analysis and Gemini-specific tools still use Gemini ([get a key](https://aistudio.google.com/app/apikey)).
 - **fal.ai API Key** ([Pay-per-use](https://fal.ai)) — required for AI Shorts (actor generation, video, lip-sync)
 - **ElevenLabs API Key** ([Free tier](https://elevenlabs.io)) — required for voiceover/dubbing
 - **Upload-Post API Key** ([free tier](https://upload-post.com)) — required for direct social posting
@@ -226,15 +226,23 @@ cp .env.example .env
 docker compose up --build
 ```
 
-### 4. Open Dashboard
-Navigate to **`http://localhost:5175`**
+The renderer bundles `remotion/` at startup. When upgrading Remotion, keep the resolved version the same in `remotion/package-lock.json` and `render-service/package-lock.json`.
 
-1. Go to **Settings** and enter your API keys (Gemini, fal.ai, ElevenLabs, Upload-Post)
+The backend keeps downloaded Whisper models in the `model_cache` Docker volume. It works on Windows without applying Linux file permissions to the host checkout, and reuses the models across container rebuilds. Keep the volume if you want to avoid downloading the models again.
+
+### 4. Open Dashboard
+Navigate to **`http://localhost:5175/#app`**. On Windows, if the dashboard still serves old code after a source edit, run `docker compose restart frontend`.
+
+1. Go to **Settings** and choose a **Clip Generator AI provider**. Add keys for the other features you use.
 2. **Clip Generator**: Upload a long-form video to generate viral shorts
 3. **AI Shorts**: Describe your product or paste a URL to generate UGC marketing videos
 4. **YouTube Studio**: Generate thumbnails, titles, and descriptions for YouTube
 5. **UGC Gallery**: Browse all generated videos and avatars
 6. **AI Agent**: Drop vertical videos in a folder and an agent skill picks, edits and queues clips for your approval
+
+For a hosted OpenAI-compatible provider, select **Custom (OpenAI-compatible)**, enter its public HTTPS base URL (for example `https://openrouter.ai/api/v1`, without `/chat/completions`), model ID, and API key if required, then select **Save provider**. Settings and the key are saved in this browser. Clip Generator sends the transcript to the selected provider, which may charge for requests. Upload-Post is optional unless you publish to social platforms.
+
+To remove a custom provider and its key, select the default provider and save. If the backend restarts during a custom-provider job, resubmit the video; the key is not saved in the server's job manifest.
 
 ### 5. GPU acceleration (optional, NVIDIA)
 

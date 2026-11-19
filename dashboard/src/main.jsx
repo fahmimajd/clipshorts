@@ -8,7 +8,7 @@ import PricingPage from './components/PricingPage'
 import AccountPage from './components/AccountPage'
 import LoginModal from './components/LoginModal'
 import { readPendingPlan } from './lib/pendingPlan'
-import { track } from './lib/analytics'
+import { track } from './lib/product-events'
 import { applyConsent } from './lib/consent'
 import CookieBanner from './components/CookieBanner'
 

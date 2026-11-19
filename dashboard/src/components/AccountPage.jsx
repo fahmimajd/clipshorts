@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, CreditCard, LogOut, Plus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 import { useBackFromStripe } from '../lib/backFromStripe';
 import ApiKeysCard from './ApiKeysCard';
 import McpConnectCard from './McpConnectCard';

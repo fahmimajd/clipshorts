@@ -12,7 +12,7 @@ never a partial one.
 """
 import json
 import os
-import tempfile
+from uuid import uuid4
 
 
 def write_json_atomic(path, data, **dump_kwargs):
@@ -21,21 +21,17 @@ def write_json_atomic(path, data, **dump_kwargs):
     The temp file ends in `.tmp`, so neither the `*_metadata.json` globs nor
     the artifact uploader (.json/.mp4) ever pick it up.
     """
-    directory = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(dir=directory,
-                               prefix=f".{os.path.basename(path)}.",
-                               suffix=".tmp")
+    path = os.path.abspath(path)
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except FileNotFoundError:
+        mode = 0o644
+    tmp = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.{uuid4().hex}.tmp")
+    # Set the mode at creation so mounts without chmod can still store metadata.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, **dump_kwargs)
-        # mkstemp creates the file 0600; keep the mode the file already had
-        # (what open(path, 'w') would have kept). Not via os.umask: it is
-        # process-wide and the API writes from several threads.
-        try:
-            mode = os.stat(path).st_mode & 0o777
-        except FileNotFoundError:
-            mode = 0o644
-        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:

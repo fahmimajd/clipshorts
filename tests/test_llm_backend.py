@@ -12,6 +12,7 @@ import pytest
 
 import gemini_worker
 import llm_backend
+import ssrf_guard
 
 
 @pytest.fixture
@@ -53,6 +54,44 @@ def test_base_url_alone_activates_and_describes(local):
 def test_explicit_gemini_provider_wins_over_base_url(local, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     assert llm_backend.active() is False
+
+
+@pytest.mark.parametrize("base", [
+    "http://example.com/v1",
+    "https://127.0.0.1/v1",
+    "https://[::1]/v1",
+    "https://user:password@example.com/v1",
+    "https://example.com/v1?token=value",
+    "https://example.com/v1/chat/completions",
+])
+def test_dashboard_provider_rejects_unsafe_base_urls(base):
+    with pytest.raises(ValueError, match="public HTTPS"):
+        llm_backend.remote_job_env(base, "provider/model", "")
+
+
+def test_dashboard_provider_sends_its_model_and_key_without_assuming_price(monkeypatch):
+    monkeypatch.setattr(llm_backend, "assert_public_url", lambda url: url)
+    env = llm_backend.remote_job_env("https://example.com/api/v1/", "provider/model", "test-key")
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    def handler(request):
+        assert str(request.url) == "https://example.com/api/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer test-key"
+        assert json.loads(request.content)["model"] == "provider/model"
+        assert ssrf_guard.active()
+        return _completion({"windows": []})
+
+    _serve(handler, monkeypatch)
+    assert llm_backend.generate_json("score windows", gemini_worker.ScoreResponse) == ({"windows": []}, None)
+
+
+def test_dashboard_provider_does_not_echo_upstream_error_body(local, monkeypatch):
+    monkeypatch.setenv("LLM_REMOTE_ONLY", "1")
+    _serve(lambda r: httpx.Response(401, text="upstream echoed a secret"), monkeypatch)
+    with pytest.raises(RuntimeError, match="HTTP 401") as error:
+        llm_backend.generate_json("score windows", gemini_worker.ScoreResponse)
+    assert "upstream echoed a secret" not in str(error.value)
 
 
 # --- generate_json ---------------------------------------------------------

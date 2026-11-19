@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Loader2, Download, Film, FolderOpen } from 'lucide-react';
 import { apiJson } from '../lib/api';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 
 // The signed-in user's saved video library (stored in R2). Private, signed links.
 // Videos are grouped by project (job); re-openable projects get a "reopen"

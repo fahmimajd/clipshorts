@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Download, Copy, Check, Play } from 'lucide-react';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 
 export default function GalleryCard({ clip }) {
     const [copied, setCopied] = useState(null);

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, Scissors } from 'lucide-react';
 import { apiJson } from '../lib/api';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 import { useAuth } from '../contexts/AuthContext';
 
 // What the source will cost, shown before Generate: the one complaint about

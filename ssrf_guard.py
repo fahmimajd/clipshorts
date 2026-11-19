@@ -75,7 +75,7 @@ def _guarded_getaddrinfo(host, port, *args, **kwargs):
         return infos
     name = host.decode() if isinstance(host, (bytes, bytearray)) else str(host)
     name = name.strip("[]").lower().rstrip(".")
-    if not name or name in allowed_hosts():
+    if not name or (getattr(_state, "allow_configured_hosts", True) and name in allowed_hosts()):
         return infos
     public = [info for info in infos if _ip_is_public(info[4][0])]
     if not public:
@@ -95,14 +95,17 @@ def install():
 
 
 @contextlib.contextmanager
-def guarded():
-    """Only public addresses resolve on this thread for the duration."""
+def guarded(*, allow_configured_hosts=True):
+    """Guard DNS on this thread, optionally without infrastructure exceptions."""
     install()
     _state.depth = getattr(_state, "depth", 0) + 1
+    previous = getattr(_state, "allow_configured_hosts", True)
+    _state.allow_configured_hosts = previous and allow_configured_hosts
     try:
         yield
     finally:
         _state.depth -= 1
+        _state.allow_configured_hosts = previous
 
 
 def assert_public_urls(info) -> None:

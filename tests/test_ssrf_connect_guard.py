@@ -56,6 +56,15 @@ def test_configured_infrastructure_hosts_still_resolve(monkeypatch):
         assert socket.getaddrinfo("localhost", 4416)
 
 
+def test_strict_guard_cannot_use_infrastructure_exceptions(monkeypatch):
+    monkeypatch.setenv("BGUTIL_BASE_URL", "http://localhost:4416")
+    with ssrf_guard.guarded():
+        with ssrf_guard.guarded(allow_configured_hosts=False), ssrf_guard.guarded():
+            with pytest.raises(socket.gaierror):
+                socket.getaddrinfo("localhost", 4416)
+        assert socket.getaddrinfo("localhost", 4416)
+
+
 def test_public_addresses_pass():
     with ssrf_guard.guarded():
         assert socket.getaddrinfo("8.8.8.8", 443)

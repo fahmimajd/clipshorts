@@ -1,6 +1,7 @@
 import { allows } from './consent';
 import { firstTouchProps } from './attribution';
 
+// Keep app bootstrap independent of the analytics.js URL blocked by some browsers.
 // Lightweight custom-event helper (OpenPanel).
 //
 // The hosted openshorts.app build loads OpenPanel (see index.html), which

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link2, Upload, FileVideo, X, Info, Loader2, ChevronDown } from 'lucide-react';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 import { getApiUrl } from '../config';
 import SourceCost from './SourceCost';
 import { useAuth } from '../contexts/AuthContext';

@@ -3,7 +3,7 @@ import { Download, Share2, AlertCircle, Loader2, Copy, Check, Wand2, Type, Calen
 import { getApiUrl } from '../config';
 import { apiFetch, QuotaError, openQuotaWall } from '../lib/api';
 import { platformOptions as buildPlatformOptions, defaultPlatformFlags, flagsFromList } from '../lib/socialPlatforms';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';

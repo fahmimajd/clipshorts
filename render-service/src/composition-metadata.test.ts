@@ -25,6 +25,7 @@ test(
   async () => {
     const composition = await selectComposition({
       serveUrl: getBundleLocation(),
+      browserExecutable: process.env.PUPPETEER_EXECUTABLE_PATH,
       id: "ShortVideo",
       inputProps: {
         videoUrl: "",
@@ -49,6 +50,7 @@ test(
   async () => {
     const composition = await selectComposition({
       serveUrl: getBundleLocation(),
+      browserExecutable: process.env.PUPPETEER_EXECUTABLE_PATH,
       id: "ShortVideo",
       inputProps: { videoUrl: "" },
       logLevel: "error",

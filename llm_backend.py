@@ -25,10 +25,14 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import nullcontext
 from typing import Optional, Tuple, Type
 
 import httpx
 from pydantic import BaseModel
+
+import ssrf_guard
+from security_utils import assert_public_url
 
 DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_TIMEOUT = 600.0  # local models on CPU are slow; a scoring batch can take minutes
@@ -64,6 +68,31 @@ def describe() -> Optional[dict]:
     return {"provider": "openai", "model": model_name(), "baseUrl": base_url()}
 
 
+def remote_job_env(base: str, model: str, key: str) -> dict[str, str]:
+    """Validate a dashboard-supplied provider, not the operator's `.env`."""
+    base, model, key = base.strip(), model.strip(), key.strip()
+    if not model or len(model) > 256 or not all("!" <= c <= "~" for c in model):
+        raise ValueError("Enter a valid model ID (at most 256 characters, without spaces).")
+    if len(key) > 2048 or not all("!" <= c <= "~" for c in key):
+        raise ValueError("Enter a valid provider API key without spaces.")
+    try:
+        url = httpx.URL(base)
+        if (len(base) > 512 or not all("!" <= c <= "~" for c in base)
+                or url.scheme != "https" or not url.host or url.userinfo
+                or "?" in base or "#" in base or url.path.rstrip("/").endswith("/chat/completions")):
+            raise ValueError
+        canonical_base = assert_public_url(str(url).rstrip("/"))
+    except (ValueError, httpx.InvalidURL) as exc:
+        raise ValueError("Enter a public HTTPS base URL without credentials, a query, or /chat/completions.") from exc
+    return {
+        "LLM_PROVIDER": "openai",
+        "LLM_BASE_URL": canonical_base,
+        "LLM_MODEL": model,
+        "LLM_API_KEY": key,
+        "LLM_REMOTE_ONLY": "1",
+    }
+
+
 def _timeout() -> float:
     try:
         return float(os.environ.get("LLM_TIMEOUT") or DEFAULT_TIMEOUT)
@@ -71,11 +100,12 @@ def _timeout() -> float:
         return DEFAULT_TIMEOUT
 
 
-def _headers() -> dict:
-    # Ollama ignores the key but the OpenAI client convention (and vLLM with
-    # --api-key) wants the header present; "ollama" is the documented placeholder.
-    key = (os.environ.get("LLM_API_KEY") or "ollama").strip()
-    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+def _headers(remote: bool) -> dict:
+    key = (os.environ.get("LLM_API_KEY") or ("" if remote else "ollama")).strip()
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
 
 
 def _client(**kwargs) -> httpx.Client:
@@ -116,26 +146,27 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
         {"role": "system", "content": "You answer with a single JSON object and nothing else."},
         {"role": "user", "content": prompt},
     ]
-    last_rejection: Optional[str] = None
-    with _client() as client:
+    remote = os.environ.get("LLM_REMOTE_ONLY") == "1"
+    headers = _headers(remote)
+    guard = ssrf_guard.guarded(allow_configured_hosts=False) if remote else nullcontext()
+    with guard, _client(trust_env=not remote) as client:
         for fmt in _response_formats(schema):
             body = {"model": model, "messages": messages, "temperature": 0.2, "stream": False}
             if fmt is not None:
                 body["response_format"] = fmt
-            resp = client.post(url, json=body, headers=_headers())
+            resp = client.post(url, json=body, headers=headers)
             if fmt is not None and _is_format_rejection(resp):
                 # The server does not know this response_format flavour; the
                 # next loop iteration asks for a looser one.
-                last_rejection = resp.text[:200]
                 continue
-            if resp.status_code >= 400:
+            if not resp.is_success:
+                if remote:
+                    raise RuntimeError(
+                        f"AI provider returned HTTP {resp.status_code}. Check the base URL, model ID and API key.")
                 raise RuntimeError(
                     f"LLM server {resp.status_code} from {url}: {resp.text[:300]}")
             data = resp.json()
             break
-        else:
-            raise RuntimeError(
-                f"LLM server rejected every response_format variant: {last_rejection}")
 
     choices = data.get("choices") or []
     text = ""
@@ -149,6 +180,9 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
     # local model that drops a field fails here with a readable error
     # (retried by the caller) instead of deep inside the clip pipeline.
     validated = schema.model_validate(parsed).model_dump()
+    if remote:
+        # Pricing for arbitrary hosted models is not known to OpenShorts.
+        return validated, None
 
     usage = data.get("usage") or {}
     cost = {

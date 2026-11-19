@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Check, Loader2, Zap, ArrowRight } from 'lucide-react';
 import { apiJson } from '../lib/api';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 import { useBackFromStripe } from '../lib/backFromStripe';
 import Modal from './ui/Modal';
 

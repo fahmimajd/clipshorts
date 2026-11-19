@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { apiJson, openQuotaWall, QuotaError } from '../lib/api';
 import { PLATFORM_VALUES, platformLabel } from '../lib/socialPlatforms';
-import { track } from '../lib/analytics';
+import { track } from '../lib/product-events';
 import { connectNotice } from '../lib/connectReturn';
 
 // Autopilot: every new video on the user's connected YouTube channel is turned

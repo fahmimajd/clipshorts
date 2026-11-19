@@ -2355,7 +2355,8 @@ def _install_drain_signal_handler():
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
                            webhook_url=None, webhook_secret=None, base_url=None,
                            partial=None, source_cap_minutes=None, skip_statics=False,
-                           via_api_key=False, lane=None, submitted_at=None, topup=False):
+                           via_api_key=False, lane=None, submitted_at=None, topup=False,
+                           custom_llm=False):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         # Atomic like every manifest write: the other instance reads them.
@@ -2385,6 +2386,7 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
                 "lane": lane or _queue_mode.NORMAL,
                 "submitted_at": submitted_at,
                 "topup": bool(topup),
+                "custom_llm": bool(custom_llm),
         })
     except Exception as e:
         print(f"⚠️ Could not write resume manifest for {job_id}: {e}")
@@ -2583,6 +2585,12 @@ def _register_resumed(picked) -> int:
             _resume_delivery_record(job_id, jobs[job_id], m)
             _pending_deliveries.append(job_id)
             resumed += 1
+            continue
+        if m.get("custom_llm"):
+            jobs[job_id].update(status="failed", env=None, logs=_TimedLog([
+                "The server restarted before clipping finished. Submit the video again to use your custom AI provider.",
+            ]))
+            _clear_resume_manifest(job_id)
             continue
         _enqueue_job(job_id, priority)
         if user_id is not None:
@@ -5217,6 +5225,8 @@ def _remote_eligible(job_id, priority) -> bool:
     job = jobs.get(job_id)
     if not job or job.get('status') != 'queued' or job.get('env') is None:
         return False
+    if job['env'].get("LLM_REMOTE_ONLY") == "1":
+        return False
     if priority < _queue_mode.FREE_PRIORITY or job.get('auto_retries'):
         return False
     if job_id in _running_jobs or job_id in _admitting:
@@ -6051,11 +6061,16 @@ async def process_endpoint(
     source_end: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
-    if not api_key and not (llm_backend.active() and not BILLING_ENABLED):
-        # Self-host with an OpenAI-compatible server configured needs no
-        # Google key for the core pipeline: the moment picker runs there and
-        # the frame-based stages degrade on their own (layout_picker returns
-        # "none", silent videos fail with a message that says why).
+    custom_llm = None
+    if not BILLING_ENABLED and (base := request.headers.get("X-LLM-Base-URL")) is not None:
+        try:
+            custom_llm = await asyncio.to_thread(
+                llm_backend.remote_job_env, base, request.headers.get("X-LLM-Model", ""),
+                request.headers.get("X-LLM-API-Key", ""),
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    if not api_key and not (not BILLING_ENABLED and (custom_llm or llm_backend.active())):
         raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
@@ -6168,6 +6183,8 @@ async def process_endpoint(
         env["GEMINI_API_KEY"] = api_key # Override with key from request
     else:
         env.pop("GEMINI_API_KEY", None)  # local-LLM job: main.py must not find a stale key
+    if custom_llm:
+        env.update(custom_llm)
     # The stdio fix above only covers this process. main.py prints an emoji on
     # its first line and configures nothing, so on a cp1252 console the child
     # still dies before it renders anything -- the server starts and every job
@@ -6419,7 +6436,7 @@ async def process_endpoint(
                            source_cap_minutes=source_cap, skip_statics=skip_statics,
                            via_api_key=jobs[job_id]['via_api_key'],
                            lane=jobs[job_id]['lane'], submitted_at=jobs[job_id]['submitted_at'],
-                           topup=jobs[job_id]['topup'])
+                           topup=jobs[job_id]['topup'], custom_llm=custom_llm is not None)
 
     _enqueue_job(job_id, priority)
     if _saturation_on():

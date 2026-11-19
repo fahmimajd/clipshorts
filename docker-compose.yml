@@ -7,6 +7,7 @@ services:
     volumes:
       - .:/app
       - /app/__pycache__
+      - model_cache:/app/.cache
       - ./output:/app/output
     restart: unless-stopped
 
@@ -40,3 +41,6 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+
+volumes:
+  model_cache:
