@@ -16,7 +16,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/mutonby/openshorts?style=social)](https://github.com/mutonby/openshorts)
 [![Last Commit](https://img.shields.io/github/last-commit/mutonby/openshorts)](https://github.com/mutonby/openshorts/commits/main)
 
-**Open source AI video platform** with 3 tools in one: **Clip Generator**, **AI Shorts (UGC videos with AI actors)**, and **YouTube Studio**.
+**Open source AI video platform.** The self-hosted dashboard focuses on **Clip Generator** and **Settings**. OpenShorts Cloud also offers **AI Shorts** (UGC videos with AI actors) and **YouTube Studio**.
 
 ![Your podcast, and the vertical clip OpenShorts makes of it: both speakers stacked, captions on the seam](screenshots/split-before-after.gif)
 
@@ -32,9 +32,9 @@ Two people on camera? OpenShorts stacks them instead of shrinking the wide shot,
 |---|---|---|
 | **Price** | Free forever, MIT | Free plan, paid from $12/mo |
 | **Speed** | 5 to 8 min per 8-min video on CPU | About 50s on our NVIDIA GPU |
-| **API keys** | Bring your own Gemini, ElevenLabs, fal.ai | Gemini included, nothing to set up |
+| **Clip AI provider** | Gemini or an OpenAI-compatible provider | Gemini included |
 | **Watermark / limits** | None, ever | Watermark and 20 min/mo on the free plan, neither on paid |
-| **Auto-posting** | With your own Upload-Post account | Paid plans: connect TikTok, Instagram, YouTube, Facebook, LinkedIn, Threads and Bluesky once, post or schedule from the app |
+| **Auto-posting** | Dashboard uses previously configured Upload-Post credentials only | Paid plans: connect TikTok, Instagram, YouTube, Facebook, LinkedIn, Threads and Bluesky once, post or schedule from the app |
 | **Autopilot** | Not included | Paid plans: every new video on your channel becomes scheduled shorts |
 | **Setup** | Docker, 8GB+ RAM, model downloads | Sign in and paste a link |
 | **MCP / API for agents** | Same `/mcp` endpoint, but only while your machine is on | Always-on endpoint at [mcp.openshorts.app](https://www.openshorts.app/mcp), API keys in one click |
@@ -74,7 +74,7 @@ Connect your YouTube channel and publish as usual. Every new video is clipped on
 
 ![Autopilot settings](dashboard/public/screens/autopilot-settings.webp)
 
-### 3. AI Shorts (UGC Video Creator)
+### 3. AI Shorts (Cloud dashboard)
 Generate marketing videos with AI actors for **any product or business**. No camera, no studio, no influencer budget. Describe your product or paste a URL.
 
 ![The UGC gallery with AI actor videos](dashboard/public/screens/app-ugc.webp)
@@ -84,7 +84,7 @@ Generate marketing videos with AI actors for **any product or business**. No cam
 - Pick an avatar from the shared gallery or upload your own photo
 - Every video lands in the public gallery ([openshorts.app/gallery](https://openshorts.app/gallery)) with its own SEO page
 
-### 4. YouTube Studio
+### 4. YouTube Studio (Cloud dashboard)
 AI titles (10 options with a refinement chat), thumbnails with your face over a background, descriptions with chapter timestamps, and one-click publishing to YouTube.
 
 ### 5. Inside Claude and ChatGPT
@@ -110,7 +110,8 @@ Add OpenShorts to Claude or ChatGPT with one URL and ask for clips in plain lang
 - **Post a clip to TikTok, Instagram, YouTube, Facebook, LinkedIn, Threads and Bluesky at once**, or schedule it for any date and time
 - **Schedule a week**: spread a batch of clips across the coming days in one go
 - **Post analytics**: views of the clips you published from OpenShorts, in the app
-- On the Cloud it is wired up on every paid plan; self-hosted, paste your own Upload-Post key
+- On the Cloud it is wired up on every paid plan. The self-hosted dashboard no longer has a setup form for Upload-Post.
+  Previously configured keys still work.
 - **Only want to post videos you already have, without clipping?** Use [Upload-Post](https://www.upload-post.com) directly: TikTok, Instagram, YouTube, LinkedIn, Facebook, X, Threads, Pinterest, Bluesky and more, with a free plan, a REST API and an MCP server
 
 ### AI Shorts Pipeline
@@ -233,14 +234,12 @@ The backend keeps downloaded Whisper models in the `model_cache` Docker volume. 
 ### 4. Open Dashboard
 Navigate to **`http://localhost:5175/#app`**. On Windows, if the dashboard still serves old code after a source edit, run `docker compose restart frontend`.
 
-1. Go to **Settings** and choose a **Clip Generator AI provider**. Add keys for the other features you use.
-2. **Clip Generator**: Upload a long-form video to generate viral shorts
-3. **AI Shorts**: Describe your product or paste a URL to generate UGC marketing videos
-4. **YouTube Studio**: Generate thumbnails, titles, and descriptions for YouTube
-5. **UGC Gallery**: Browse all generated videos and avatars
-6. **AI Agent**: Drop vertical videos in a folder and an agent skill picks, edits and queues clips for your approval
+1. In **Settings**, choose a **Clip Generator AI provider** and add a Gemini API key if needed.
+2. In **Clip Generator**, paste a YouTube URL or upload a video. Generate, edit and download your clips.
 
-For a hosted OpenAI-compatible provider, select **Custom (OpenAI-compatible)**, enter its public HTTPS base URL (for example `https://openrouter.ai/api/v1`, without `/chat/completions`), model ID, and API key if required, then select **Save provider**. Settings and the key are saved in this browser. Clip Generator sends the transcript to the selected provider, which may charge for requests. Upload-Post is optional unless you publish to social platforms.
+The self-hosted Settings page only configures clipping. MCP is available through the [server setup below](#mcp-server-mcp). UGC and dubbing keys are configured in Cloud Settings; local dubbing still uses any ElevenLabs key already saved in the browser.
+
+For a hosted OpenAI-compatible provider, select **Custom (OpenAI-compatible)**, enter its public HTTPS base URL (for example `https://openrouter.ai/api/v1`, without `/chat/completions`), model ID, and API key if required, then select **Save provider**. Settings and the key are saved in this browser. Clip Generator sends the transcript to the selected provider, which may charge for requests.
 
 To remove a custom provider and its key, select the default provider and save. If the backend restarts during a custom-provider job, resubmit the video; the key is not saved in the server's job manifest.
 
@@ -488,7 +487,7 @@ lives in [`examples/n8n/`](examples/n8n/).
 2. **Create Profile**: Go to [Manage Users](https://app.upload-post.com/manage-users)
 3. **Connect Accounts**: Link TikTok, Instagram, and/or YouTube
 4. **Get API Key**: Navigate to [API Keys](https://app.upload-post.com/api-keys)
-5. **Use in OpenShorts**: Paste the key in Settings
+5. **Self-hosted automation**: set `UPLOAD_POST_API_KEY` for server-side use. The dashboard no longer accepts new Upload-Post keys.
 
 On [OpenShorts Cloud](https://www.openshorts.app/) none of this is needed: paid plans connect your socials from the app.
 

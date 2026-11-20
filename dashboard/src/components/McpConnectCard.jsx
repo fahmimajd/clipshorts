@@ -1,34 +1,14 @@
 import React, { useState, useCallback } from 'react';
 import { Plug, Copy, Check } from 'lucide-react';
-import { getApiUrl } from '../config';
 
-// "Connect an agent": the one place that tells a person how to drive
-// OpenShorts from Claude, ChatGPT, Cursor or n8n. Cloud accounts connect by
-// URL (claude.ai and ChatGPT run the OAuth flow themselves; CLI clients take
-// an API key); a self-hosted install has no auth, so every snippet is the
-// local URL and nothing else.
+// Cloud web clients use OAuth; CLI clients use an account API key.
 
 const CLOUD_MCP_URL = 'https://mcp.openshorts.app/mcp';
 
-// The self-hosted dashboard proxies /api and /videos to the backend but not
-// /mcp (neither the Vite dev proxy nor nginx.conf), so an MCP client must
-// talk to the API container itself: VITE_API_URL when it is set, otherwise
-// the backend's default port on the same host.
-function localMcpUrl() {
-  const u = getApiUrl('/mcp');
-  if (u.startsWith('http')) return u;
-  try { return `${window.location.protocol}//${window.location.hostname}:8000/mcp`; } catch { return 'http://localhost:8000/mcp'; }
-}
-
-function buildClients({ cloud, url }) {
-  const key = cloud ? 'osk_YOUR_KEY' : null;
-  const header = key ? ` \\\n  --header "Authorization: Bearer ${key}"` : '';
-  const desktopArgs = key
-    ? `["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${key}"]`
-    : `["-y", "mcp-remote", "${url}"]`;
-  const cursorHeaders = key ? `,\n      "headers": { "Authorization": "Bearer ${key}" }` : '';
-  return [
-    cloud && {
+const url = CLOUD_MCP_URL;
+const key = 'osk_YOUR_KEY';
+const clients = [
+    {
       id: 'claude-ai', label: 'Claude (claude.ai)', kind: 'steps',
       steps: [
         'Open claude.ai → Settings → Connectors → Add custom connector.',
@@ -37,7 +17,7 @@ function buildClients({ cloud, url }) {
       ],
       snippet: url,
     },
-    cloud && {
+    {
       id: 'chatgpt', label: 'ChatGPT', kind: 'steps',
       steps: [
         'Open ChatGPT → Settings → Connectors → Create (developer mode).',
@@ -48,17 +28,17 @@ function buildClients({ cloud, url }) {
     },
     {
       id: 'claude-code', label: 'Claude Code', kind: 'code', lang: 'bash',
-      snippet: `claude mcp add --transport http openshorts ${url}${header}`,
-      note: cloud ? 'Create a key below and paste it in place of osk_YOUR_KEY.' : 'No key needed on a self-hosted install.',
+      snippet: `claude mcp add --transport http openshorts ${url} \\\n  --header "Authorization: Bearer ${key}"`,
+      note: 'Create a key below and paste it in place of osk_YOUR_KEY.',
     },
     {
       id: 'claude-desktop', label: 'Claude Desktop', kind: 'code', lang: 'json',
-      snippet: `{\n  "mcpServers": {\n    "openshorts": {\n      "command": "npx",\n      "args": ${desktopArgs}\n    }\n  }\n}`,
+      snippet: `{\n  "mcpServers": {\n    "openshorts": {\n      "command": "npx",\n      "args": ["-y", "mcp-remote", "${url}", "--header", "Authorization: Bearer ${key}"]\n    }\n  }\n}`,
       note: 'Settings → Developer → Edit config (claude_desktop_config.json), then restart Claude.',
     },
     {
       id: 'cursor', label: 'Cursor', kind: 'code', lang: 'json',
-      snippet: `{\n  "mcpServers": {\n    "openshorts": {\n      "url": "${url}"${cursorHeaders}\n    }\n  }\n}`,
+      snippet: `{\n  "mcpServers": {\n    "openshorts": {\n      "url": "${url}",\n      "headers": { "Authorization": "Bearer ${key}" }\n    }\n  }\n}`,
       note: 'Settings → MCP → Add new global MCP server (.cursor/mcp.json).',
     },
     {
@@ -66,21 +46,18 @@ function buildClients({ cloud, url }) {
       steps: [
         'Add an "MCP Client Tool" node to your AI Agent.',
         `Endpoint: ${url}  ·  Transport: HTTP Streamable.`,
-        cloud ? 'Authentication: Bearer, with a key from below.' : 'Authentication: none.',
+        'Authentication: Bearer, with a key from below.',
       ],
       snippet: url,
     },
     {
       id: 'curl', label: 'curl', kind: 'code', lang: 'bash',
-      snippet: `curl -X POST ${url} \\\n  -H "Content-Type: application/json"${key ? ` \\\n  -H "Authorization: Bearer ${key}"` : ''} \\\n  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`,
+      snippet: `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${key}" \\\n  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`,
       note: 'Plain JSON-RPC over HTTP: the same endpoint every client above talks to.',
     },
-  ].filter(Boolean);
-}
+];
 
-export default function McpConnectCard({ cloud = true, compact = false }) {
-  const url = cloud ? CLOUD_MCP_URL : localMcpUrl();
-  const clients = buildClients({ cloud, url });
+export default function McpConnectCard() {
   const [active, setActive] = useState(clients[0].id);
   const [copied, setCopied] = useState(false);
   const current = clients.find((c) => c.id === active) || clients[0];
@@ -100,9 +77,7 @@ export default function McpConnectCard({ cloud = true, compact = false }) {
       <p className="text-muted text-sm mb-4">
         Let Claude, ChatGPT, Cursor or n8n clip and publish for you through the built-in MCP server:
         8 tools (process a video or upload one, check a job, list clips, add subtitles, recut, publish, quota).
-        {cloud
-          ? ' claude.ai and ChatGPT connect with one URL and a sign-in; CLI clients use an API key.'
-          : ' This install runs without accounts, so no key is needed.'}
+        Connect claude.ai or ChatGPT with a URL and sign-in. Use an API key for CLI clients.
       </p>
 
       <div className="flex flex-wrap gap-1.5 mb-4" role="tablist" aria-label="client">
@@ -127,7 +102,7 @@ export default function McpConnectCard({ cloud = true, compact = false }) {
       )}
 
       <div className="relative">
-        <pre className={`font-mono text-ink2 whitespace-pre-wrap break-all rounded-card border border-rule bg-paper p-3 pr-20 text-xs ${compact ? '' : 'leading-relaxed'}`}>
+        <pre className="font-mono text-ink2 whitespace-pre-wrap break-all rounded-card border border-rule bg-paper p-3 pr-20 text-xs leading-relaxed">
           {current.snippet}
         </pre>
         <button onClick={copy} className="btn-ghost absolute top-2 right-2 px-2.5 py-1 text-xs" aria-label="copy">

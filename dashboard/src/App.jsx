@@ -3,7 +3,6 @@ import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activ
 import KeyInput from './components/KeyInput';
 import ClipProviderSettings from './components/ClipProviderSettings';
 import MediaInput from './components/MediaInput';
-import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
 import { clipProgress, FREE_CLIPS_PER_VIDEO, FREE_CLIPS_QUIET, MAX_CLIPS_PER_VIDEO } from './lib/clipProgress';
@@ -343,12 +342,8 @@ function App() {
     else localStorage.removeItem(CLIP_PROVIDER_STORAGE_KEY);
     setCustomLlm(provider);
   };
-  // Social API State - Load encrypted or plain
-  const [uploadPostKey, setUploadPostKey] = useState(() => {
-    const stored = localStorage.getItem('uploadPostKey_v3');
-    if (stored) return decrypt(stored);
-    return '';
-  });
+  // Preserve publishing on self-hosted installs that already configured a key.
+  const [uploadPostKey] = useState(() => decrypt(localStorage.getItem('uploadPostKey_v3')));
   // ElevenLabs API State - Load encrypted
   const [elevenLabsKey, setElevenLabsKey] = useState(() => {
     const stored = localStorage.getItem('elevenLabsKey_v1');
@@ -424,7 +419,9 @@ function App() {
     try { return window.innerWidth >= 768; } catch { return true; }
   });
   const [processingMedia, setProcessingMedia] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
+  const [requestedTab, setActiveTab] = useState('dashboard');
+  // Keep the requested tab until config arrives, so Cloud deep links survive startup.
+  const activeTab = billingEnabled || requestedTab === 'settings' ? requestedTab : 'dashboard';
   // Mobile only: the full nav lives in a drawer behind the header's menu button.
   const [navOpen, setNavOpen] = useState(false);
   const navDrawerRef = useRef(null);
@@ -848,13 +845,8 @@ function App() {
   }, [apiKey]);
 
   useEffect(() => {
-    if (uploadPostKey) {
-      localStorage.setItem('uploadPostKey_v3', encrypt(uploadPostKey));
-    }
-    if (uploadUserId) {
-      localStorage.setItem('uploadUserId', uploadUserId);
-    }
-  }, [uploadPostKey, uploadUserId]);
+    if (uploadUserId) localStorage.setItem('uploadUserId', uploadUserId);
+  }, [uploadUserId]);
 
   useEffect(() => {
     if (elevenLabsKey) {
@@ -870,7 +862,7 @@ function App() {
 
   useEffect(() => {
     if ((uploadPostKey || isManaged) && userProfiles.length === 0) {
-      fetchUserProfiles({ silent: true });
+      fetchUserProfiles();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploadPostKey, isManaged]);
@@ -1007,9 +999,7 @@ function App() {
   }, [status, jobId, refreshMe]);
 
 
-  // silent: background auto-fetch — never alert(), just log. Managed users need
-  // no local key (the server resolves its own); BYOK sends the header.
-  const fetchUserProfiles = async ({ silent = false } = {}) => {
+  const fetchUserProfiles = async () => {
     if (!uploadPostKey && !isManaged) return;
     try {
       const res = await apiFetch('/api/social/user', {
@@ -1023,11 +1013,8 @@ function App() {
         if (!uploadUserId) {
           setUploadUserId(data.profiles[0].username);
         }
-      } else if (!silent) {
-        alert("No profiles found for this API Key.");
       }
     } catch (e) {
-      if (!silent) alert("Error fetching User Profiles. Please check key.");
       console.error(e);
     }
   };
@@ -1466,14 +1453,15 @@ function App() {
   // wraps to two lines in a 5-up bar on a 360px phone.
   const navItems = [
     { id: 'dashboard', ord: '01', icon: Scissors, label: 'Clip Generator', short: 'clips', primary: true },
-    // Cloud only: it runs on the managed pipeline and the Upload-Post connection.
-    ...(billingEnabled ? [{ id: 'autopilot', ord: '02', icon: Rocket, label: 'Autopilot', short: 'autopilot', isNew: true }] : []),
-    { id: 'saasshorts', ord: '03', icon: Sparkles, label: 'AI Shorts', short: 'ai shorts', byok: true, primary: true },
-    { id: 'ai-agent', ord: '04', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
-    { id: 'ugc-gallery', ord: '05', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true },
-    { id: 'thumbnails', ord: '06', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
-    ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '07', icon: History, label: 'History', short: 'history' }] : []),
-    { id: 'settings', ord: '08', icon: Settings, label: 'Settings', short: 'settings' },
+    ...(billingEnabled ? [
+      { id: 'autopilot', ord: '02', icon: Rocket, label: 'Autopilot', isNew: true },
+      { id: 'saasshorts', ord: '03', icon: Sparkles, label: 'AI Shorts', short: 'ai shorts', byok: true, primary: true },
+      { id: 'ai-agent', ord: '04', icon: Bot, label: 'AI Agent', byok: true },
+      { id: 'ugc-gallery', ord: '05', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true },
+      { id: 'thumbnails', ord: '06', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
+      ...(isSignedIn ? [{ id: 'history', ord: '07', icon: History, label: 'History' }] : []),
+    ] : []),
+    { id: 'settings', ord: billingEnabled ? '08' : '02', icon: Settings, label: 'Settings', short: 'settings', primary: !billingEnabled },
   ];
   const activeNav = navItems.find((n) => n.id === activeTab);
 
@@ -1653,7 +1641,7 @@ function App() {
     </dialog>
   );
 
-  // Bottom tab bar: the four everyday destinations plus "more" for the rest.
+  // Local installs fit both destinations in the bar. Cloud has a drawer for the rest.
   // The bottom bar sits alongside the scrolling pane, so it cannot cover content.
   const renderMobileTabBar = () => {
     const tabs = navItems.filter((n) => n.primary);
@@ -1680,17 +1668,19 @@ function App() {
               </button>
             );
           })}
-          <button
-            type="button"
-            onClick={openNav}
-            aria-label="more sections"
-            aria-expanded={navOpen}
-            aria-controls="workspace-navigation"
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-14 border-t-2 ${moreActive ? 'text-ink border-brass font-semibold' : 'text-muted border-transparent hover:text-ink'} active:bg-paper3 focus-visible:-outline-offset-2`}
-          >
-            <Menu size={18} aria-hidden="true" className={moreActive ? 'text-brass' : ''} />
-            <span className="text-[10.5px] lowercase leading-none">more</span>
-          </button>
+          {billingEnabled && (
+            <button
+              type="button"
+              onClick={openNav}
+              aria-label="more sections"
+              aria-expanded={navOpen}
+              aria-controls="workspace-navigation"
+              className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-14 border-t-2 ${moreActive ? 'text-ink border-brass font-semibold' : 'text-muted border-transparent hover:text-ink'} active:bg-paper3 focus-visible:-outline-offset-2`}
+            >
+              <Menu size={18} aria-hidden="true" className={moreActive ? 'text-brass' : ''} />
+              <span className="text-[10.5px] lowercase leading-none">more</span>
+            </button>
+          )}
         </div>
       </nav>
     );
@@ -1854,16 +1844,13 @@ function App() {
             <div className="h-full overflow-y-auto p-4 sm:p-8 max-w-2xl mx-auto animate-fade">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-8">
                 <div>
-                  <p className="eyebrow mb-1.5">08 · SETTINGS</p>
+                  <p className="eyebrow mb-1.5">{activeNav.ord} · SETTINGS</p>
                   <h1 className="font-display lowercase text-2xl text-ink">Settings</h1>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted mt-1">
                   <Shield size={12} className="text-ok shrink-0" /> Privacy: keys only live in your browser (sent to backend just to process)
                 </div>
               </div>
-              {/* Self-hosted installs have no account page, so the agent
-                  how-to lives here; cloud users get it (with OAuth) in Account. */}
-              {!billingEnabled && <div className="mb-6"><McpConnectCard cloud={false} /></div>}
               {isManaged ? (
                 <div className="card p-6 mb-2">
                   <div className="flex items-center justify-between mb-3">
@@ -1909,64 +1896,12 @@ function App() {
                 </div>
               ) : (
                 <>
-              <ClipProviderSettings saved={customLlm} serverModel={localLlm?.model} onSave={saveClipProvider} />
-              <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
-
-              <div className="card p-4 sm:p-6 mt-8">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-input bg-paper3 flex items-center justify-center shrink-0">
-                      <Share2 size={16} className="text-brass" />
-                    </div>
-                    <h2 className="text-base font-medium text-ink lowercase">Social Integration</h2>
-                  </div>
-                  <span className="text-xs text-muted">Optional</span>
-                </div>
-                <p className="text-xs text-muted mb-6 leading-relaxed">
-                  Required to publish your clips to TikTok, Instagram Reels, and YouTube Shorts via <strong>Upload-Post</strong>.
-                  Includes a <strong>free tier</strong> (no credit card required).
-                </p>
-                <div className="space-y-4">
-                  <label className="block text-sm text-muted">Upload-Post API Key</label>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="password"
-                      value={uploadPostKey}
-                      onChange={(e) => setUploadPostKey(e.target.value)}
-                      className="input-field"
-                      placeholder="ey..."
-                    />
-                    <button onClick={fetchUserProfiles} className="btn-quiet py-2 px-4 text-sm">
-                      Connect
-                    </button>
-                  </div>
-                  <div className="text-xs text-muted leading-relaxed">
-                    Connect your Upload-Post account to enable one-click publishing.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="p-2 border border-rule rounded-input hover:bg-paper3 transition-colors flex flex-col gap-1">
-                        <span className="text-ink2 font-medium">1. Login</span>
-                        <span className="text-xs text-muted">Register account</span>
-                      </a>
-                      <a href="https://app.upload-post.com/manage-users" target="_blank" rel="noopener noreferrer" className="p-2 border border-rule rounded-input hover:bg-paper3 transition-colors flex flex-col gap-1">
-                        <span className="text-ink2 font-medium">2. Profiles</span>
-                        <span className="text-xs text-muted">Create & Connect</span>
-                      </a>
-                      <a href="https://app.upload-post.com/api-keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-rule rounded-input hover:bg-paper3 transition-colors flex flex-col gap-1">
-                        <span className="text-ink2 font-medium">3. API Key</span>
-                        <span className="text-xs text-muted">Generate key</span>
-                      </a>
-                    </div>
-                    <br />
-                    <span className="text-muted">
-                      Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
-                    </span>
-                  </div>
-                </div>
-              </div>
-
+                  <ClipProviderSettings saved={customLlm} serverModel={localLlm?.model} onSave={saveClipProvider} />
+                  <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
                 </>
               )}
 
+              {billingEnabled && <>
               <div className="card p-4 sm:p-6 mt-8">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                   <div className="flex items-center gap-3">
@@ -2081,6 +2016,7 @@ function App() {
                   </div>
                 </div>
               </div>
+              </>}
             </div>
           )}
 
@@ -2294,12 +2230,11 @@ function App() {
 
                 <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
 
-                {!tutorialLock && (
+                {billingEnabled && !tutorialLock && (
                   <p className="mt-4 text-sm text-muted">
                     Working from an agent?{' '}
                     <a
-                      href={billingEnabled ? '#/account' : '#app'}
-                      onClick={(e) => { if (!billingEnabled) { e.preventDefault(); goToTab('settings'); } }}
+                      href="#/account"
                       className="inline-flex items-center min-h-11 text-ink2 underline underline-offset-2 hover:text-ink active:translate-y-px"
                     >
                       Connect Claude, ChatGPT or n8n
@@ -2499,7 +2434,7 @@ function App() {
                           ? <><Loader2 size={14} className="animate-spin" />zipping…</>
                           : <><Download size={14} />download all</>}
                       </button>
-                      {results.clips.length > 1 && (
+                      {results.clips.length > 1 && (billingEnabled || (uploadPostKey && uploadUserId)) && (
                         <button
                           onClick={() => setShowScheduleWeek(true)}
                           className="btn-primary px-4 py-2 text-xs"
