@@ -2340,10 +2340,22 @@ def get_viral_clips(transcript_result, video_duration, viewer_clips=None):
                 video_duration=video_duration, language=language,
                 windows_json=json.dumps(_payload(ws), ensure_ascii=False))
 
-        for batch in score_batches(windows, SCORE_BATCH):
-            scored.extend(_run_stage_split(
+        def _score_batch(batch):
+            batch_costs = []
+            scores = _run_stage_split(
                 client, model_name, batch, _score_prompt,
-                gemini_worker.ScoreResponse, "windows", costs, "score"))
+                gemini_worker.ScoreResponse, "windows", batch_costs, "score")
+            return scores, batch_costs
+
+        batches = score_batches(windows, SCORE_BATCH)
+        if len(batches) > 1:
+            # Merge in transcript order so tie-breaking doesn't depend on network timing.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                for scores, batch_costs in pool.map(_score_batch, batches):
+                    scored.extend(scores)
+                    costs.extend(batch_costs)
+        elif batches:
+            scored, costs = _score_batch(batches[0])
 
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.

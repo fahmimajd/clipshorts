@@ -6,6 +6,7 @@ asked for 6-12 and delivered 3-4. The windows the detail pass skipped get
 one more call before the job settles for less.
 """
 import json
+from threading import Event
 
 import pytest
 
@@ -99,3 +100,39 @@ def test_scoring_fills_the_shortlist_it_targets(monkeypatch):
                                        for i in range(6)]])
     detail_windows = [c[1] for c in calls if c[0] == "detail"][0]
     assert len(detail_windows) == 8
+
+
+def test_parallel_scoring_keeps_global_ranking_and_tie_order(monkeypatch):
+    transcript = _transcript(48)
+    duration = 720
+    windows = main.build_transcript_windows(transcript, duration)
+    ids = [w["id"] for w in windows]
+    first, second = ids[:2]
+    later = ids[-1]
+    first_started, second_scored = Event(), Event()
+    seen = set()
+    monkeypatch.setenv("LLM_SCORE_BATCH", "1")
+    monkeypatch.setenv("CLIP_TARGET_MIN", "1")
+    monkeypatch.setenv("CLIP_TARGET_MAX", "1")
+    monkeypatch.setenv("CLIP_MAX_SECONDS", "60")
+    monkeypatch.setattr(main.llm_backend, "active", lambda: True)
+
+    def stage(_client, _model, prompt, schema):
+        payload = json.loads(prompt.split("WINDOWS_JSON:")[-1].split("Return only:")[0])
+        if schema is main.gemini_worker.ScoreResponse:
+            key = payload[0]["id"]
+            seen.add(key)
+            if key == first:
+                first_started.set()
+                assert second_scored.wait(3), "second scoring request never ran concurrently"
+            elif key == second:
+                assert first_started.wait(3)
+                second_scored.set()
+            return {"windows": [{"id": key, "score": 100 if key == later else 80}]}, None
+        assert seen == set(ids)
+        shortlist = [w["id"] for w in payload]
+        assert shortlist == [later] + ids[:main.shortlist_target(duration) - 1]
+        return {"shorts": [_clip(windows[-1]["start"], later)]}, None
+
+    monkeypatch.setattr(main, "_run_gemini_stage", stage)
+    assert main.get_viral_clips(transcript, duration)["shorts"][0]["source_window_id"] == later

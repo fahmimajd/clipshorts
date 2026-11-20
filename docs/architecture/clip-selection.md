@@ -16,6 +16,9 @@ Two invariants keep that chain from leaking:
   target and starves every source under ~30 min. Batches are near-equal
   (`score_batches`): a trailing batch of one window would return that window
   whatever its score.
+  At most two scoring batches run concurrently per job. Results are merged in
+  transcript order before ranking, so a tied score does not depend on which
+  provider request finished first.
 - **The clip floor is enforced in code, not just in the prompt.** When the detail
   pass comes back under `min_clips`, the shortlist windows that produced nothing
   get one more call for the difference. An empty answer is accepted: padding is
