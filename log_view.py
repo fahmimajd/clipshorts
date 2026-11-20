@@ -44,6 +44,7 @@ _RULES = [
     (re.compile(r'Transcribing (video|audio)'), '🎙️ Transcribing audio…', 'asr'),
     (re.compile(r'Analyzing with (?:Gemini|local LLM|OpenAI-compatible provider)'),
      '🤖 Finding the best moments…', None),
+    (re.compile(r'^Reading YouTube live chat replay'), 'Reading YouTube live chat replay…', None),
     (re.compile(r'Silent video — analyzing'), '🎥 No speech — finding moments in the picture…', None),
     (re.compile(r'Choosing a layout'), '🎛️ Choosing the layout…', None),
     (re.compile(r'Found (\d+) (?:viral )?clips'), '🔥 Found {0} clips!', None),

@@ -1630,7 +1630,7 @@ def trim_subtitle_band(input_video, band):
 
 def render_clip(input_video, final_output_video, output_format="auto",
                 force_strategy=None, crop_overrides=None, watermark=False,
-                subtitle_band=None):
+                subtitle_band=None, webcam_box=None):
     """Route a cut clip through the right renderer for the chosen output format.
     vertical/auto -> 9:16 reframe, square -> 1:1 reframe, horizontal -> keep.
     ``force_strategy`` (e.g. 'WIDE'/'TRACK') pins every scene's layout — the
@@ -1642,7 +1642,12 @@ def render_clip(input_video, final_output_video, output_format="auto",
     ``subtitle_band`` (the job metadata's ``source_subtitle_band``) trims the
     source's own burned-in subtitles off the bottom first, so our captions are
     the only text layer. Every render from the source passes it: the job, the
-    recut and the editor's re-render."""
+    recut and the editor's re-render. ``webcam_box`` pins the YouTube Live
+    stack unless the editor requests an explicit framing override."""
+    if webcam_box is not None and force_strategy is None and not crop_overrides:
+        from reframe_v2 import render_stream
+
+        return render_stream(input_video, final_output_video, webcam_box, watermark=watermark)
     trimmed = trim_subtitle_band(input_video, subtitle_band)
     try:
         return _render_clip(trimmed, final_output_video, output_format,
@@ -2483,6 +2488,40 @@ def speech_is_sparse(transcript, duration):
     return words < MIN_SPEECH_WORDS or words / minutes < MIN_SPEECH_WORDS_PER_MIN
 
 
+def _select_youtube_live_clips(input_video, duration, chat_events, video_title):
+    from youtube_live import clip_candidates
+
+    source_start = (float(os.environ.get("SOURCE_START_SECONDS", "0") or 0)
+                    if os.environ.get("MAX_SOURCE_MINUTES", "").strip() else 0)
+    low, high = clip_duration_bounds()
+    _, limit = clip_count_targets(shortlist_target(duration))
+    peaks = clip_candidates(chat_events, source_start=source_start, duration=duration,
+                            clip_seconds=max(low, min(30, high)), limit=limit)
+    if not peaks:
+        sys.exit("❌ YouTube Live: No replay chat messages in the selected range. "
+                 "Choose another range or use Video URL mode to select from the video instead.")
+    clips = []
+    for i, peak in enumerate(peaks, 1):
+        title = f"{video_title[:76]} | Chat highlight {i}"
+        viewers = peak["viewers"]
+        reason = f"{viewers} unique {'chatter' if viewers == 1 else 'chatters'} in this burst."
+        clips.append({"start": peak["start"], "end": peak["end"], "why": reason,
+                      "video_title_for_youtube_short": title,
+                      "viral_hook_text": f"Chat highlight {i}",
+                      "video_description_for_tiktok": title,
+                      "video_description_for_instagram": title})
+    transcript = None
+    if os.environ.get("AUTO_CAPTIONS", "1").strip() != "0":
+        from transcribe_backends import transcribe_whisper_ranges
+
+        try:
+            transcript = transcribe_whisper_ranges(
+                input_video, [(clip["start"], clip["end"]) for clip in clips])
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            print(f"⚠️ YouTube Live: captions skipped ({type(error).__name__}).")
+    return {"shorts": clips}, transcript
+
+
 # Silent footage is sent to Gemini as video (~300 tokens/s): an hour no longer
 # fits a 1M-token window. Longer sources are analysed in near-equal stretches
 # of at most VISION_SEGMENT_SECONDS, each a low-resolution proxy, and the picks
@@ -2712,9 +2751,23 @@ if __name__ == '__main__':
     parser.add_argument('--prepare-only', action='store_true',
                         help="Fetch the source (download, cut to the paid minutes), print "
                              "SOURCE_READY <path> and exit: a remote worker renders it.")
+    parser.add_argument('--youtube-live-webcam', type=float, nargs=4, metavar=("X", "Y", "W", "H"),
+                        help="Clip a completed YouTube stream using live chat, with a normalized webcam rectangle.")
 
     args = parser.parse_args()
     output_format = args.format
+    webcam_box = args.youtube_live_webcam
+    if webcam_box is not None:
+        from camera_inset import normalize_manual_box
+        from free_tools import extract_video_id
+
+        if not args.url or not (live_video_id := extract_video_id(args.url)) or args.skip_analysis or args.prepare_only:
+            parser.error("--youtube-live-webcam requires a YouTube URL and clip processing.")
+        try:
+            webcam_box = normalize_manual_box(webcam_box)
+        except ValueError as error:
+            parser.error(str(error))
+        output_format = "vertical"
 
     script_start_time = time.time()
 
@@ -2785,6 +2838,15 @@ if __name__ == '__main__':
     if args.url and not args.skip_analysis and not args.prepare_only:
         viewer_clips = twitch_signals.viewer_clips_for_job(args.url, 0)
 
+    if webcam_box is not None:
+        from youtube_live import YouTubeLiveError, fetch_chat
+
+        print("Reading YouTube live chat replay…", flush=True)
+        try:
+            chat_events = fetch_chat(live_video_id)
+        except YouTubeLiveError as error:
+            sys.exit(f"❌ YouTube Live: {error}")
+
     # 1. Get Input Video
     if args.url:
         # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
@@ -2841,7 +2903,8 @@ if __name__ == '__main__':
                      and not os.environ.get("MAX_SOURCE_MINUTES", "").strip()
                      and not os.path.exists(os.path.join(output_dir, TRANSCRIPT_CHECKPOINT)))
         input_video, video_title = download_youtube_video(
-            args.url, output_dir, on_audio=_on_audio if use_early else None, use_cache=True)
+            args.url, output_dir, on_audio=_on_audio if webcam_box is None and use_early else None,
+            use_cache=True)
     else:
         input_video = args.input
         video_title = os.path.splitext(os.path.basename(input_video))[0]
@@ -2896,7 +2959,7 @@ if __name__ == '__main__':
     # instead of one per clip, and the answer is a property of the material
     # ("this is a screencast"), which does not change between its own clips.
     # It runs before any render so the modules are switched on in time.
-    if layout_picker.ENABLED:
+    if webcam_box is None and layout_picker.ENABLED:
         try:
             _cap = cv2.VideoCapture(input_video)
             _fps = _cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -2919,7 +2982,7 @@ if __name__ == '__main__':
     # our captions are the only text layer (burned_subtitles.py). Only when we
     # caption at all, and never on a vertical source, which is passed through.
     source_subtitle_band = None
-    if (not args.skip_analysis
+    if (webcam_box is None and not args.skip_analysis
             and os.environ.get("AUTO_CAPTIONS", "1").strip() != "0"):
         try:
             import burned_subtitles
@@ -2952,78 +3015,81 @@ if __name__ == '__main__':
         duration = frame_count / fps
         cap.release()
 
-        # 3. Transcribe — unless the video has no audio, in which case fall back
-        # to Gemini vision (picks clips from the imagery instead of the speech).
-        from transcribe_backends import NoAudioError
-        transcript = None
-        # Module handover (issue #68): another module already transcribed this
-        # exact source with the same backend, so reuse its output. Any problem
-        # with the file falls back to transcribing normally rather than failing.
-        if args.transcript:
-            try:
-                with open(args.transcript, 'r') as f:
-                    transcript = json.load(f)
-                if not transcript.get('segments'):
-                    raise ValueError("transcript has no segments")
-                print(f"⏩ Reusing precomputed transcript "
-                      f"({len(transcript['segments'])} segments) — skipping transcription.")
-            except Exception as e:
-                print(f"⚠️ Could not use precomputed transcript ({e}) — transcribing normally.")
-                transcript = None
-        early_state = globals().get("early")
-        if transcript is None and early_state is not None:
-            with early_state["lock"]:
-                early_state["abandoned"] = True  # a late audio would only duplicate work
-                started = early_state["started"]
-            if started and not early_state["invalid"]:
-                early_state["done"].wait()
-                if early_state["transcript"] is not None:
-                    transcript = early_state["transcript"]
-                    print(f"♻️ Using the transcript made while the video downloaded "
-                          f"({len(transcript['segments'])} segments).")
-                    save_transcript_checkpoint(output_dir, transcript, input_video, duration)
-        if transcript is None:
-            transcript = load_transcript_checkpoint(output_dir, input_video, duration)
-            if transcript is not None:
-                print(f"♻️ Reusing the transcript from the interrupted run "
-                      f"({len(transcript['segments'])} segments) — skipping transcription.")
-        # Another job already transcribed this very source (download cache).
-        transcript_from_cache = False
-        if transcript is None and args.url:
-            import source_cache
-            transcript = source_cache.fetch_transcript(args.url, duration)
-            if transcript is not None:
-                transcript_from_cache = True
-                save_transcript_checkpoint(output_dir, transcript, input_video, duration)
-        if transcript is None:
-            try:
-                transcript = transcribe_video(input_video)
-                save_transcript_checkpoint(output_dir, transcript, input_video, duration)
-            except NoAudioError as e:
-                print(f"🔇 {e} — switching to visual analysis.")
-        if transcript is not None and args.url and not transcript_from_cache:
-            # Kept only when this job's source is the cached file, uncut.
-            import source_cache
-            source_cache.store_transcript(args.url, duration, transcript, input_video)
-
-        # Music-only or wordless footage transcribes to a handful of words.
-        # Clip it by what is on screen instead, like a video with no audio.
-        if transcript is not None and speech_is_sparse(transcript, duration):
-            n_words = sum(len((sg.get("text") or "").split()) for sg in transcript["segments"])
-            print(f"🔇 Only {n_words} word(s) of speech in {duration:.0f}s — "
-                  f"switching to visual analysis.")
-            transcript = None
-
-        # 4. Gemini Analysis (transcript-driven, or vision for silent videos)
-        early_clips = (early_state or {}).get("clips") if early_state else None
-        if (transcript is not None and early_clips
-                and transcript is early_state["transcript"]):
-            print("♻️ Using the clips Gemini picked while the video downloaded.")
-            clips_data = early_clips
-        elif transcript is not None:
-            clips_data = get_viral_clips(transcript, duration, viewer_clips=viewer_clips)
+        if webcam_box is not None:
+            clips_data, transcript = _select_youtube_live_clips(input_video, duration, chat_events, video_title)
         else:
-            clips_data = get_visual_clips(input_video, duration, viewer_clips=viewer_clips)
+            # 3. Transcribe — unless the video has no audio, in which case fall back
+            # to Gemini vision (picks clips from the imagery instead of the speech).
+            from transcribe_backends import NoAudioError
+            transcript = None
+            # Module handover (issue #68): another module already transcribed this
+            # exact source with the same backend, so reuse its output. Any problem
+            # with the file falls back to transcribing normally rather than failing.
+            if args.transcript:
+                try:
+                    with open(args.transcript, 'r') as f:
+                        transcript = json.load(f)
+                    if not transcript.get('segments'):
+                        raise ValueError("transcript has no segments")
+                    print(f"⏩ Reusing precomputed transcript "
+                          f"({len(transcript['segments'])} segments) — skipping transcription.")
+                except Exception as e:
+                    print(f"⚠️ Could not use precomputed transcript ({e}) — transcribing normally.")
+                    transcript = None
+            early_state = globals().get("early")
+            if transcript is None and early_state is not None:
+                with early_state["lock"]:
+                    early_state["abandoned"] = True  # a late audio would only duplicate work
+                    started = early_state["started"]
+                if started and not early_state["invalid"]:
+                    early_state["done"].wait()
+                    if early_state["transcript"] is not None:
+                        transcript = early_state["transcript"]
+                        print(f"♻️ Using the transcript made while the video downloaded "
+                              f"({len(transcript['segments'])} segments).")
+                        save_transcript_checkpoint(output_dir, transcript, input_video, duration)
+            if transcript is None:
+                transcript = load_transcript_checkpoint(output_dir, input_video, duration)
+                if transcript is not None:
+                    print(f"♻️ Reusing the transcript from the interrupted run "
+                          f"({len(transcript['segments'])} segments) — skipping transcription.")
+            # Another job already transcribed this very source (download cache).
+            transcript_from_cache = False
+            if transcript is None and args.url:
+                import source_cache
+                transcript = source_cache.fetch_transcript(args.url, duration)
+                if transcript is not None:
+                    transcript_from_cache = True
+                    save_transcript_checkpoint(output_dir, transcript, input_video, duration)
+            if transcript is None:
+                try:
+                    transcript = transcribe_video(input_video)
+                    save_transcript_checkpoint(output_dir, transcript, input_video, duration)
+                except NoAudioError as e:
+                    print(f"🔇 {e} — switching to visual analysis.")
+            if transcript is not None and args.url and not transcript_from_cache:
+                # Kept only when this job's source is the cached file, uncut.
+                import source_cache
+                source_cache.store_transcript(args.url, duration, transcript, input_video)
+
+            # Music-only or wordless footage transcribes to a handful of words.
+            # Clip it by what is on screen instead, like a video with no audio.
+            if transcript is not None and speech_is_sparse(transcript, duration):
+                n_words = sum(len((sg.get("text") or "").split()) for sg in transcript["segments"])
+                print(f"🔇 Only {n_words} word(s) of speech in {duration:.0f}s — "
+                      f"switching to visual analysis.")
+                transcript = None
+
+            # 4. Gemini Analysis (transcript-driven, or vision for silent videos)
+            early_clips = (early_state or {}).get("clips") if early_state else None
+            if (transcript is not None and early_clips
+                    and transcript is early_state["transcript"]):
+                print("♻️ Using the clips Gemini picked while the video downloaded.")
+                clips_data = early_clips
+            elif transcript is not None:
+                clips_data = get_viral_clips(transcript, duration, viewer_clips=viewer_clips)
+            else:
+                clips_data = get_visual_clips(input_video, duration, viewer_clips=viewer_clips)
 
         if not clips_data or 'shorts' not in clips_data:
             # Deliberately fail instead of reframing the whole video: that path
@@ -3043,6 +3109,8 @@ if __name__ == '__main__':
             # --keep-original) or in uploads/ (upload jobs).
             clips_data['source_video'] = os.path.basename(input_video)
             clips_data['output_format'] = output_format
+            if webcam_box is not None:
+                clips_data['youtube_live_webcam'] = webcam_box
             if source_subtitle_band:
                 clips_data['source_subtitle_band'] = source_subtitle_band
             metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
@@ -3080,7 +3148,7 @@ if __name__ == '__main__':
                     # made. Each worker writes only its own clip dict, so the
                     # re-dump after the pool is race-free.
                     success = render_clip(clip_temp_path, clip_final_path, output_format,
-                                          subtitle_band=source_subtitle_band)
+                                          subtitle_band=source_subtitle_band, webcam_box=webcam_box)
                     if success:
                         print(f"   🎞️ Clip {i+1} framed")
                     deliver_path = clip_final_path

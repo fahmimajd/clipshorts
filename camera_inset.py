@@ -71,6 +71,22 @@ BODY_HEADROOM = 0.10
 OVERLAY_FACE_WIDTHS = 3.0
 
 
+def normalize_manual_box(value):
+    """Validate a user-selected [x, y, width, height] in source fractions."""
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ValueError("Webcam box must be [x, y, width, height].")
+    if any(type(v) not in (int, float) or not 0 <= v <= 1 for v in value):
+        raise ValueError("Webcam box coordinates must be finite numbers from 0 to 1.")
+    x, y, w, h = map(float, value)
+    if w < 0.01 or h < 0.01:
+        raise ValueError("Webcam box must be at least 1% wide and 1% tall.")
+    if x + w > 1 or y + h > 1:
+        raise ValueError("Webcam box must fit within the source frame.")
+    if w == 1 and h == 1:
+        raise ValueError("Leave some gameplay outside the webcam box.")
+    return [x, y, w, h]
+
+
 def nearest_corner(box, frame_w, frame_h):
     """Which corner the subject sits in: (horizontal, vertical) as strings.
 

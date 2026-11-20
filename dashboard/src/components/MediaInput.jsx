@@ -4,11 +4,18 @@ import { track } from '../lib/product-events';
 import { getApiUrl } from '../config';
 import SourceCost from './SourceCost';
 import { useAuth } from '../contexts/AuthContext';
+import YouTubeLiveSetup from './YouTubeLiveSetup';
 import { FREE_CLIPS_PER_VIDEO, FREE_CLIPS_QUIET, MAX_CLIPS_PER_VIDEO } from '../lib/clipProgress';
 
 const SUPPORTED_PLATFORMS = [
     'YouTube', 'Vimeo', 'TikTok', 'X / Twitter', 'Twitch', 'Kick',
     'Facebook', 'Instagram', 'Dailymotion', 'Reddit', 'Streamable',
+];
+
+const SOURCE_MODES = [
+    ['file', 'Upload file', Upload],
+    ['url', 'Video URL', Link2],
+    ['youtube-live', 'YouTube Live'],
 ];
 
 // Mirrors the server's MIN_SOURCE_SECONDS: shorter sources are rejected with a
@@ -32,12 +39,14 @@ const readVideoDuration = (file) => new Promise((resolve) => {
     } catch { resolve(null); }
 });
 
-export default function MediaInput({ onProcess, isProcessing }) {
+export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
     const { plan } = useAuth();
     const [youtubeUrlEnabled, setYoutubeUrlEnabled] = useState(true);
-    // File upload is the primary path; the link is secondary.
-    const [mode, setMode] = useState('file'); // 'file' | 'url'
+    const [mode, setMode] = useState('file');
     const [url, setUrl] = useState('');
+    const [liveUrl, setLiveUrl] = useState('');
+    const [youtubeLiveWebcam, setYoutubeLiveWebcam] = useState(null);
+    const isYouTubeLive = mode === 'youtube-live';
     const [file, setFile] = useState(null);
     const [fileSeconds, setFileSeconds] = useState(null);
     const fileTooShort = fileSeconds != null && fileSeconds < MIN_SOURCE_SECONDS;
@@ -120,16 +129,23 @@ export default function MediaInput({ onProcess, isProcessing }) {
         }
     }, []);
 
+    const selectMode = (next) => {
+        if (next === mode) return;
+        setMode(next);
+        setRange(null);
+        setYoutubeLiveWebcam(null);
+    };
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (!acknowledged) return;
+        if (isProcessing || !acknowledged || (isYouTubeLive && !youtubeLiveWebcam)) return;
         const advanced = {
             targetClips: targetClips || null,
             clipMinSeconds: clipMinSeconds || null,
             clipMaxSeconds: clipMaxSeconds || null,
             autoHook,
             autoHookStyle,
-            layout,
+            layout: isYouTubeLive ? 'auto' : layout,
             sourceStart: range ? Math.round(range.start) : null,
             sourceEnd: range ? Math.round(range.end) : null,
         };
@@ -138,7 +154,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
             localStorage.setItem('os_auto_hook_style_v2', autoHookStyle);
             localStorage.setItem('os_layout', layout);
         } catch { /* ignore */ }
-        if (mode === 'url' && url) {
+        if (isYouTubeLive && liveUrl.trim()) {
+            onProcess({ type: 'url', payload: liveUrl.trim(), acknowledged: true, outputFormat: 'vertical', youtubeLiveWebcam, ...advanced });
+        } else if (mode === 'url' && url) {
             onProcess({ type: 'url', payload: url, acknowledged: true, outputFormat, ...advanced });
         } else if (mode === 'file' && file && !fileTooShort) {
             onProcess({ type: 'file', payload: file, acknowledged: true, outputFormat, ...advanced });
@@ -158,30 +176,47 @@ export default function MediaInput({ onProcess, isProcessing }) {
             <div className="grid gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] xl:gap-6">
                 <section aria-labelledby="clip-source-heading" className="min-w-0">
                     <h2 id="clip-source-heading" className="text-sm font-semibold text-ink">source video</h2>
-                    <div className="flex gap-4 mb-3 border-b border-rule" data-tutorial="source-tabs">
-                        <button
-                            type="button"
-                            onClick={() => setMode('file')}
-                            aria-pressed={mode === 'file'}
-                            className={`inline-flex min-h-11 items-center gap-2 px-0.5 -mb-px border-b-2 text-sm lowercase hover:text-ink active:translate-y-px ${mode === 'file' ? 'text-ink font-medium border-brass' : 'text-muted border-transparent'}`}
-                        >
-                            <Upload size={16} aria-hidden="true" />
-                            Upload file
-                        </button>
-                        {youtubeUrlEnabled && (
-                            <button
-                                type="button"
-                                onClick={() => setMode('url')}
-                                aria-pressed={mode === 'url'}
-                                className={`inline-flex min-h-11 items-center gap-2 px-0.5 -mb-px border-b-2 text-sm lowercase hover:text-ink active:translate-y-px ${mode === 'url' ? 'text-ink font-medium border-brass' : 'text-muted border-transparent'}`}
-                            >
-                                <Link2 size={16} aria-hidden="true" />
-                                Video URL
-                            </button>
-                        )}
+                    <div className="flex flex-wrap gap-x-3 sm:gap-x-4 mb-3 border-b border-rule" data-tutorial="source-tabs">
+                        {SOURCE_MODES.map(([value, label, Icon]) => {
+                            if (!youtubeUrlEnabled && value !== 'file') return null;
+                            const active = mode === value;
+                            return (
+                                <button
+                                    key={value}
+                                    type="button"
+                                    onClick={() => selectMode(value)}
+                                    aria-pressed={active}
+                                    className={`inline-flex min-h-11 min-w-11 items-center gap-2 px-0.5 -mb-px border-b-2 text-sm cursor-pointer hover:text-ink active:translate-y-px ${Icon ? 'lowercase' : ''} ${active ? 'text-ink font-medium border-brass' : 'text-muted border-transparent'}`}
+                                >
+                                    {Icon && <Icon size={16} aria-hidden="true" />}
+                                    {label}
+                                </button>
+                            );
+                        })}
                     </div>
 
-                {mode === 'url' ? (
+                {isYouTubeLive ? (
+                    <div className="space-y-3" data-tutorial="drop-zone">
+                        <label htmlFor="clip-live-url" className="block text-sm text-ink2">YouTube livestream replay link</label>
+                        <input
+                            id="clip-live-url"
+                            type="url"
+                            value={liveUrl}
+                            onChange={(e) => {
+                                setLiveUrl(e.target.value);
+                                setYoutubeLiveWebcam(null);
+                                setRange(null);
+                            }}
+                            aria-describedby="clip-live-url-hint"
+                            className="input-field clip-field min-h-11 transition-none"
+                            required
+                        />
+                        <p id="clip-live-url-hint" className="text-xs leading-relaxed text-muted">
+                            Use a finished stream with chat replay. Peaks in unique chatters help pick clips.
+                        </p>
+                        <YouTubeLiveSetup key={liveUrl} url={liveUrl} onWebcamChange={setYoutubeLiveWebcam} onSignIn={onSignIn} />
+                    </div>
+                ) : mode === 'url' ? (
                     <div className="space-y-4" data-tutorial="drop-zone">
                         <label htmlFor="clip-video-url" className="block text-sm lowercase text-ink2">video link</label>
                         <div className="relative">
@@ -272,9 +307,10 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 )}
 
                 <SourceCost
-                    mode={mode}
-                    url={url}
-                    fileSeconds={fileSeconds}
+                    key={isYouTubeLive ? `youtube-live:${liveUrl}` : undefined}
+                    mode={isYouTubeLive ? 'url' : mode}
+                    url={isYouTubeLive ? liveUrl : url}
+                    fileSeconds={isYouTubeLive ? null : fileSeconds}
                     range={range}
                     onRangeChange={setRange}
                 />
@@ -283,7 +319,11 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 {/* Output format selector */}
                 <section aria-labelledby="clip-format-heading" className="min-w-0 border-t border-rule pt-4 xl:border-t-0 xl:border-l xl:pl-6 xl:pt-0" data-tutorial="output-format">
                     <h2 id="clip-format-heading" className="text-sm font-semibold text-ink mb-3 xl:mb-4">output format</h2>
-                    <div role="group" aria-labelledby="clip-format-heading" className="grid grid-cols-3 gap-2">
+                    {isYouTubeLive ? (
+                        <p className="text-sm leading-relaxed text-ink2">
+                            <span className="font-mono tabular-nums text-ink">9:16</span> vertical. Gameplay goes on top, with the selected webcam enlarged below.
+                        </p>
+                    ) : <div role="group" aria-labelledby="clip-format-heading" className="grid grid-cols-3 gap-2">
                         {[
                             { value: 'vertical', label: '9:16', hint: 'Shorts, Reels, TikTok', w: 18, h: 32 },
                             { value: 'square', label: '1:1', hint: 'Feed posts', w: 28, h: 28 },
@@ -307,7 +347,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                 </button>
                             );
                         })}
-                    </div>
+                    </div>}
                 </section>
             </div>
 
@@ -362,11 +402,12 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                 />
                             </div>
                             <p className="col-span-1 sm:col-span-3 text-[11px] leading-relaxed text-muted">
-                                Targets, not guarantees: the AI returns fewer clips when the
-                                material doesn't hold them. Leave blank to let it decide.
+                                {isYouTubeLive
+                                    ? 'Targets, not guarantees: the number of clips depends on chat activity. Leave blank to use the defaults.'
+                                    : "Targets, not guarantees: the AI returns fewer clips when the material doesn't hold them. Leave blank to let it decide."}
                                 {plan === 'free' && ` The free plan makes the ${FREE_CLIPS_PER_VIDEO} to ${FREE_CLIPS_QUIET} best clips of each video, fewer while its queue is busy; plans get every clip, up to ${MAX_CLIPS_PER_VIDEO}.`}
                             </p>
-                            <div className="col-span-1 sm:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-3 sm:pt-1 border-t border-rule">
+                            {!isYouTubeLive && <div className="col-span-1 sm:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-3 sm:pt-1 border-t border-rule">
                                 <label htmlFor="clip-vertical-layout" className="text-xs text-ink2">vertical layout</label>
                                 <select
                                     id="clip-vertical-layout"
@@ -379,7 +420,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                     <option value="screencast">Screen over presenter</option>
                                     <option value="none">Single crop only</option>
                                 </select>
-                            </div>
+                            </div>}
                             <div className="col-span-1 sm:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-3 sm:pt-1 border-t border-rule">
                                 <label className="flex min-h-11 items-center gap-2 text-xs text-ink2 cursor-pointer select-none">
                                     <input
@@ -435,7 +476,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 <button
                     type="submit"
                     data-tutorial="generate"
-                    disabled={isProcessing || !acknowledged || (mode === 'url' && !url) || (mode === 'file' && (!file || fileTooShort))}
+                    disabled={isProcessing || !acknowledged || (isYouTubeLive && !youtubeLiveWebcam) || (mode === 'url' && !url) || (mode === 'file' && (!file || fileTooShort))}
                     className="w-full min-h-11 btn-primary mt-3 sm:mt-0 sm:w-auto sm:shrink-0"
                 >
                     {isProcessing ? (

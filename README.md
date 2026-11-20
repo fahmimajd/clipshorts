@@ -239,6 +239,8 @@ Navigate to **`http://localhost:5175/#app`**. On Windows, if the dashboard still
 1. In **Settings**, choose a **Clip Generator AI provider** and add a Gemini API key if needed.
 2. In **Clip Generator**, paste a YouTube URL or upload a video. Generate, edit and download your clips.
 
+For a completed landscape gaming stream, choose **YouTube Live**, paste the replay link, select **Load frame**, and draw a box around the webcam before generating clips. Use a frame where the entire camera overlay is visible and stays in the same position throughout the stream. OpenShorts clips the busiest replay-chat moments and renders gameplay above the webcam in 9:16. The replay needs public live chat; use **Video URL** for a regular video or a replay without chat. Self-hosted YouTube Live clipping does not require an AI provider.
+
 The **active for new clips** summary in Settings shows the transcript provider, model, and configuration source. A saved browser override takes precedence over the server default. Unsaved edits do not change the summary.
 
 The self-hosted Settings page only configures clipping. MCP is available through the [server setup below](#mcp-server-mcp). UGC and dubbing keys are configured in Cloud Settings; local dubbing still uses any ElevenLabs key already saved in the browser.

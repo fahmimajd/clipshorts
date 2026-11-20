@@ -4,6 +4,11 @@
 
 - `POST /api/process`: submit a video for processing. Optional `source_start` /
   `source_end` (seconds) clip and bill only that stretch.
+  A JSON `youtube_live_webcam: [x, y, width, height]` selects YouTube Live
+  mode and forces 9:16. The coordinates are fractions of the source frame.
+- `GET /api/youtube-live/preview?url=...&seconds=...`: load a preview for a
+  completed YouTube livestream with chat replay. Returns a JPEG data URL in
+  `image`, the VOD `duration` and the actual sampled `seconds`.
 - `GET /api/status/{job_id}`: poll job status and logs.
 - `POST /api/edit`: apply AI video effects.
 - `POST /api/subtitle`: generate and apply subtitles (auto-transcribes dubbed videos).

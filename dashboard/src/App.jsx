@@ -1248,7 +1248,7 @@ function App() {
       // fall through the same gates.
       if (!isSignedIn) { stashPendingJob(data); setShowLogin(true); return; }
       if (!isManaged) { window.location.hash = '#/pricing'; return; }
-    } else if (clipProviderMissing) {
+    } else if (clipProviderMissing && !data.youtubeLiveWebcam) {
       setShowKeyModal(true);
       return;
     }
@@ -1273,7 +1273,7 @@ function App() {
       // BYOK sends the Gemini header; managed users rely on the bearer token
       // that apiFetch attaches automatically.
       const headers = apiKey ? { 'X-Gemini-Key': apiKey } : {};
-      if (!billingEnabled && customLlm) {
+      if (!billingEnabled && customLlm && !data.youtubeLiveWebcam) {
         headers['X-LLM-Base-URL'] = customLlm.baseUrl;
         headers['X-LLM-Model'] = customLlm.model;
         if (customLlm.apiKey) headers['X-LLM-API-Key'] = customLlm.apiKey;
@@ -1306,6 +1306,7 @@ function App() {
           acknowledged: !!data.acknowledged,
           output_format: data.outputFormat || 'auto',
           force_low_quality: forceLowQuality,
+          youtube_live_webcam: data.youtubeLiveWebcam || undefined,
           ...Object.fromEntries(Object.entries(advanced).filter(([, v]) => v != null)),
         });
       } else if (data.type === 'thumbnail_session') {
@@ -1776,7 +1777,7 @@ function App() {
               <KeyRound size={16} className="shrink-0 text-warn mt-0.5 sm:mt-0" />
               <div className="min-w-0">
                 <span className="font-medium text-ink">No clip AI provider configured.</span>{' '}
-                <span className="text-muted">Choose a custom provider or enter a Gemini API key in Settings.</span>
+                <span className="text-muted">For uploads and regular video links, configure a provider in Settings. YouTube Live uses chat replay instead.</span>
               </div>
             </div>
             <button
@@ -2227,7 +2228,8 @@ function App() {
                   </p>
                 </div>
 
-                <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
+                <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'}
+                  onSignIn={() => setShowLogin(true)} />
 
                 {billingEnabled && !tutorialLock && (
                   <p className="mt-4 text-sm text-muted">

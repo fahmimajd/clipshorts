@@ -29,9 +29,10 @@ export function clipProgress(logs) {
     }
     if (!total) {
       // Download progress can interleave with early transcription and selection.
-      if (SELECT.test(text)) phase = 'Selecting moments';
+      if (text.startsWith('Reading YouTube live chat replay')) phase = 'Reading chat replay';
+      else if (SELECT.test(text)) phase = 'Selecting moments';
       else if (phase !== 'Selecting moments' && TRANSCRIBE.test(text)) phase = 'Transcribing audio';
-      else if (phase === 'Preparing source' && DOWNLOAD.test(text)) phase = 'Downloading video';
+      else if ((phase === 'Preparing source' || phase === 'Reading chat replay') && DOWNLOAD.test(text)) phase = 'Downloading video';
       continue;
     }
     const done = READY.exec(text);

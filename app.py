@@ -6041,6 +6041,40 @@ async def process_estimate(req: EstimateRequest, request: Request):
         balance.get("plan"), minutes, balance["remaining"], processed_before)}
 
 
+def _youtube_live_id(url):
+    from free_tools import extract_video_id
+
+    video_id = extract_video_id(url) if isinstance(url, str) and len(url) <= 2048 else None
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Enter the link to a completed YouTube livestream.")
+    return video_id
+
+
+@app.get("/api/youtube-live/preview")
+async def youtube_live_preview(request: Request, url: str, seconds: Optional[float] = None):
+    import base64
+    from youtube_live import YouTubeLiveError, preview
+
+    if DISABLE_YOUTUBE_URL:
+        raise HTTPException(status_code=403, detail="YouTube URL ingest is disabled on this deployment.")
+    if BILLING_ENABLED:
+        user = await _user_from_request(request)
+        if not managed_keys.has_active_entitlement(user):
+            raise gemini_missing_error()
+        _check_probe_rate(f"youtube-live-preview:{user.id}")
+    if seconds is not None and (not math.isfinite(seconds) or seconds < 0):
+        raise HTTPException(status_code=400, detail="Preview time must be a nonnegative number.")
+    try:
+        image, duration, frame_seconds = await asyncio.to_thread(preview, _youtube_live_id(url), seconds)
+    except YouTubeLiveError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+    return JSONResponse({
+        "image": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
+        "duration": duration,
+        "seconds": frame_seconds,
+    }, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/process")
 async def process_endpoint(
     request: Request,
@@ -6065,20 +6099,10 @@ async def process_endpoint(
     source_end: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
-    custom_llm = None
-    if not BILLING_ENABLED and (base := request.headers.get("X-LLM-Base-URL")) is not None:
-        try:
-            custom_llm = await asyncio.to_thread(
-                llm_backend.remote_job_env, base, request.headers.get("X-LLM-Model", ""),
-                request.headers.get("X-LLM-API-Key", ""),
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-    if not api_key and not (not BILLING_ENABLED and (custom_llm or llm_backend.active())):
-        raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
     force_low = str(force_low_quality).lower() in ("1", "true", "yes")
+    youtube_live_webcam = None
 
     # Handle JSON body manually for URL payload
     content_type = request.headers.get("content-type", "")
@@ -6102,6 +6126,7 @@ async def process_endpoint(
         max_minutes = body.get("max_minutes")
         source_start = body.get("source_start")
         source_end = body.get("source_end")
+        youtube_live_webcam = body.get("youtube_live_webcam")
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
@@ -6112,6 +6137,31 @@ async def process_endpoint(
         layouts = [p for p in layouts.split(",") if p.strip()]
     elif not isinstance(layouts, list):
         layouts = []
+
+    if youtube_live_webcam is not None:
+        from camera_inset import normalize_manual_box
+
+        try:
+            youtube_live_webcam = normalize_manual_box(youtube_live_webcam)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        video_id = _youtube_live_id(url)
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        output_format = "vertical"
+        layouts = []
+
+    custom_llm = None
+    if youtube_live_webcam is None and not BILLING_ENABLED and (base := request.headers.get("X-LLM-Base-URL")) is not None:
+        try:
+            custom_llm = await asyncio.to_thread(
+                llm_backend.remote_job_env, base, request.headers.get("X-LLM-Model", ""),
+                request.headers.get("X-LLM-API-Key", ""),
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    if not api_key and (BILLING_ENABLED or
+                        (youtube_live_webcam is None and not (custom_llm or llm_backend.active()))):
+        raise gemini_missing_error()
 
     # Module handover (issue #68): reuse the Thumbnail Studio source video and
     # its transcript so publishing to YouTube can flow straight into clip
@@ -6261,6 +6311,8 @@ async def process_endpoint(
         # re-render path cuts new segments from it, and it ages out with the
         # rest of the job (retention window + OUTPUT_MAX_GB cap) either way.
         cmd.extend(["-u", url, "--keep-original"])
+        if youtube_live_webcam is not None:
+            cmd.extend(["--youtube-live-webcam", *map(str, youtube_live_webcam)])
     elif thumb_session:
         # Hardlink (or copy) the session's video under the job's name so source
         # lookup, the clip editor and the preview treat it exactly like a normal
@@ -7742,8 +7794,8 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
             captions_transcript=v_transcript,
             captioner=_recut_captioner(clip),
             # Trim the source's own subtitles only when ours go back on.
-            subtitle_band=(data.get('source_subtitle_band')
-                           if v_transcript else None))
+            subtitle_band=(data.get('source_subtitle_band') if v_transcript else None),
+            webcam_box=data.get('youtube_live_webcam'))
 
     try:
         loop = asyncio.get_event_loop()
@@ -8350,8 +8402,8 @@ async def _reframe_locked(req: ReframeRequest, request: Request, job, overrides)
             captions_transcript=v_transcript,
             captioner=_recut_captioner(clip),
             # Trim the source's own subtitles only when ours go back on.
-            subtitle_band=(data.get('source_subtitle_band')
-                           if v_transcript else None))
+            subtitle_band=(data.get('source_subtitle_band') if v_transcript else None),
+            webcam_box=data.get('youtube_live_webcam'))
 
     try:
         loop = asyncio.get_event_loop()

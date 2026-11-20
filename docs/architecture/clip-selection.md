@@ -75,3 +75,16 @@ silently). Self-host `/api/process` then accepts a request without
 `X-Gemini-Key` and `/api/config.localLlm` tells the dashboard not to demand one.
 Frame-based stages (`layout_picker`, `screencast_layout`, `get_visual_clips`)
 stay on Gemini. Never wired in cloud mode: `BILLING_ENABLED` ignores it.
+
+## YouTube Live replay highlights (`youtube_live.py`)
+
+The YouTube Live input only accepts completed landscape replays with public
+live chat. Preview reads one YouTube storyboard tile. The job fetches the chat
+replay via yt-dlp, anonymous direct then static, never over the paid proxy.
+All requests and bytes are bounded. Chat text and author IDs are not stored.
+
+Rank sliding windows by distinct chatters, then take non-overlapping clips
+with up to five seconds of lead-in to account for reaction delay. Chat times
+are absolute in the VOD; clip times are rebased to any source cut. No usable
+chat is an explicit failure, not an automatic switch to transcript selection.
+Whisper only transcribes the selected ranges when captions are enabled.

@@ -17,6 +17,7 @@ Callers must treat any exception as "fall back to the v1 loop".
 Pure helpers (sendcmd/concat generation, scene slicing) have no heavy imports
 so they stay unit-testable in CI.
 """
+import math
 import os
 import subprocess
 import tempfile
@@ -637,6 +638,77 @@ def encode_scenes(input_video, specs, orig_w, orig_h, out_w, out_h, fps,
         "-movflags", "+faststart",
         final_output_video,
     ])
+
+
+def _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box):
+    x, y, w, h = camera_inset.normalize_manual_box(webcam_box)
+    # Round out to chroma boundaries so no part of the webcam leaks into gameplay.
+    left, top = 2 * int(x * orig_w / 2), 2 * int(y * orig_h / 2)
+    frame_w, frame_h = orig_w & ~1, orig_h & ~1
+    right = min(frame_w, 2 * math.ceil((x + w) * orig_w / 2))
+    bottom = min(frame_h, 2 * math.ceil((y + h) * orig_h / 2))
+    webcam = (left, top, right - left, bottom - top)
+    if webcam[2] <= 0 or webcam[3] <= 0:
+        raise ValueError("Webcam box is too small for the source resolution.")
+    # Every rectangle that avoids the webcam lies in one of these four strips.
+    strips = ((0, 0, frame_w, top), (0, bottom, frame_w, frame_h - bottom),
+              (0, 0, left, frame_h), (right, 0, frame_w - right, frame_h))
+    gameplay = max(strips, key=lambda rect: rect[2] * rect[3])
+    if gameplay[2] * gameplay[3] == 0:
+        raise ValueError("Select just the webcam, leaving some gameplay outside the box.")
+
+    def fit(label, rect, panel_h):
+        x, y, w, h = rect
+        scale = min(out_w / w, panel_h / h)
+        scaled_w = max(2, min(out_w, 2 * round(w * scale / 2)))
+        scaled_h = max(2, min(panel_h, 2 * round(h * scale / 2)))
+        px, py = 2 * ((out_w - scaled_w) // 4), 2 * ((panel_h - scaled_h) // 4)
+        return (f"[{label}]crop={w}:{h}:{x}:{y},scale={scaled_w}:{scaled_h},"
+                f"pad={out_w}:{panel_h}:{px}:{py}[{label}fit];")
+
+    # Even heights match both renderers; the halves differ by at most two pixels.
+    top_h = (out_h // 2) & ~1
+    return ("[0:v]split=2[game][cam];"
+            + fit("game", gameplay, top_h)
+            + fit("cam", webcam, out_h - top_h)
+            + "[gamefit][camfit]vstack,setsar=1[v]")
+
+
+def render_stream(input_video, final_output_video, webcam_box, watermark=False):
+    """Render a fixed gameplay/webcam split without scene or face detection."""
+    import cv2
+
+    input_video, final_output_video = map(os.fspath, (input_video, final_output_video))
+    cap = cv2.VideoCapture(input_video)
+    try:
+        if not cap.isOpened():
+            raise OSError(f"Cannot open gaming stream clip: {input_video}")
+        orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    finally:
+        cap.release()
+    if orig_w <= orig_h or orig_h < 2:
+        raise ValueError("Gaming Stream needs a landscape source video.")
+    if not (math.isfinite(fps) and math.isfinite(frames) and fps > 0 and frames > 0):
+        raise ValueError("Could not read the gaming stream clip's frame rate or duration.")
+    dur = frames / fps
+    out_w, out_h = delivery_size(orig_w, orig_h, 9 / 16)
+    graph = _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box)
+
+    logo = None
+    if watermark:
+        import main as m
+        logo = m.watermark_logo_path()
+        if not os.path.exists(logo):
+            print(f"   ⚠️ Watermark asset missing ({logo}); clip kept unmarked.")
+            logo = None
+    with tempfile.TemporaryDirectory(prefix="reframe_stream_") as workdir:
+        encode_scenes(input_video, [(0, dur, graph, None)], orig_w, orig_h,
+                      out_w, out_h, fps, workdir, logo, final_output_video)
+    layout_ranges.write(final_output_video, [(0, dur, "SPLIT")])
+    return True
 
 
 def render(input_video, final_output_video, aspect_ratio, content_ranges=None,

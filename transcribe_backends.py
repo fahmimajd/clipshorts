@@ -321,6 +321,84 @@ def _transcribe_with_whisper(media_path):
     }
 
 
+def _merge_ranges(ranges):
+    merged = []
+    for start, end in sorted((round(start, 3), round(end, 3)) for start, end in ranges):
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def missing_whisper_ranges(transcript, ranges):
+    """Subtract already transcribed audio, including silence, from the requested ranges."""
+    covered = (transcript or {}).get("whisper_coverage", [])
+    missing = []
+    for start, end in _merge_ranges(ranges):
+        for left, right in covered:
+            if right <= start:
+                continue
+            if left >= end:
+                break
+            if left > start:
+                missing.append((start, left))
+            start = right
+            if start >= end:
+                break
+        if start < end:
+            missing.append((start, end))
+    return missing
+
+
+def transcribe_whisper_ranges(media_path, ranges, transcript=None):
+    """Decode only uncovered audio. Persist source-absolute words and covered intervals."""
+    missing = missing_whisper_ranges(transcript, ranges)
+    if not missing:
+        return transcript
+
+    previous = transcript or {}
+    segments = list(previous.get("segments", []))
+    language = previous.get("language")
+    print("🎙️ Transcribing audio for selected clips…", flush=True)
+    seconds = sum(end - start for start, end in missing)
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "range.wav")
+        with host_asr_slot(media_seconds=seconds):
+            try:
+                for start, end in missing:
+                    # Give Whisper context at the seam when extending a clip,
+                    # but keep only words belonging to the uncovered range.
+                    offset = max(0, start - 0.75) if transcript else start
+                    stop = end + 0.75 if transcript else end
+                    subprocess.run(
+                        ["ffmpeg", "-nostdin", "-y", "-v", "error", "-ss", f"{offset:.3f}",
+                         "-i", media_path, "-t", f"{stop - offset:.3f}", "-map", "0:a:0",
+                         "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav],
+                        check=True, capture_output=True, timeout=60)
+                    decoded = _transcribe_with_whisper(wav)
+                    language = language or decoded["language"]
+                    for seg in decoded["segments"]:
+                        words = []
+                        for word in seg["words"]:
+                            left, right = word["start"] + offset, word["end"] + offset
+                            if start <= (left + right) / 2 < end:
+                                left, right = round(max(start, left), 3), round(min(end, right), 3)
+                                if left < right:
+                                    words.append({"word": word["word"], "start": left, "end": right})
+                        if words:
+                            segments.append({"start": words[0]["start"], "end": words[-1]["end"],
+                                             "text": "".join(w["word"] for w in words).strip(),
+                                             "words": words})
+            finally:
+                release_models()
+    segments.sort(key=lambda seg: seg["start"])
+    return {"language": language, "segments": segments,
+            "whisper_coverage": _merge_ranges([*previous.get("whisper_coverage", []), *missing])}
+
+
 # --- parakeet ---------------------------------------------------------------
 
 _parakeet_model = None
