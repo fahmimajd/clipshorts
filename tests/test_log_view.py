@@ -90,3 +90,19 @@ def test_each_line_keeps_the_time_it_first_appeared():
         ("🔥 Found 2 clips!", 110.0),
         ("🎬 Creating clip 1…", 111.0),
     ]
+
+
+def test_render_stages_keep_clip_number_and_hide_provider():
+    assert friendly_logs([
+        "🤖  Analyzing with OpenAI-compatible provider (2-pass: score → detail)...",
+        "Adding subtitles and hook to clip 3",
+        "Adding hook to clip 3",
+        "Adding subtitles to clip 3",
+        "🔁 Retrying clip 2 once…",
+    ]) == [
+        "🤖 Finding the best moments…",
+        "Adding subtitles and hook to clip 3",
+        "Adding hook to clip 3",
+        "Adding subtitles to clip 3",
+        "🔁 Retrying clip 2",
+    ]

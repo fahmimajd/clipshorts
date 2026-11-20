@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Scan, Scissors, Activity, Radio, CheckCircle } from 'lucide-react';
+import { Scissors, Activity } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { apiFetch } from '../lib/api';
 
@@ -139,26 +139,9 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
         </>
       )}
 
-      {/* Top HUD bar. One flex row, not two pills pinned to opposite corners:
-          pinned, they overlapped and interleaved their letters as soon as the
-          box was narrower than their combined ~330px — every phone, and the
-          md tablet width too, where this panel is only 55% of the viewport.
-          justify-between + a truncating left pill degrades instead. */}
       {!isSyncedPlaying && (
-          <div className="absolute top-2.5 left-2.5 right-2.5 sm:top-4 sm:left-4 sm:right-4 z-30 flex items-start justify-between gap-2 pointer-events-none">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/70 readout min-w-0 transition-colors duration-500 ${isComplete ? 'text-ok' : 'text-brass animate-pulse'}`}>
-              {isComplete
-                ? <CheckCircle size={14} className="shrink-0" />
-                : <Scan size={14} className="shrink-0" />}
-              <span className="truncate">{isComplete ? 'Analysis Complete' : 'Scanning Content...'}</span>
-            </div>
-            {/* Carries nothing the left pill doesn't; it is the first thing to
-                go when there is no room. */}
-            {!isComplete && (
-              <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-black/70 rounded-full readout shrink-0">
-                VIRAL_DETECTION: ACTIVE
-              </div>
-            )}
+          <div className="absolute top-2.5 left-2.5 sm:top-4 sm:left-4 z-30 px-3 py-1.5 rounded-full bg-black/70 readout text-ink2 pointer-events-none">
+            Source preview
           </div>
       )}
 
@@ -182,23 +165,6 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
                <Activity size={12} /> Live Sync
            </div>
        )}
-
-       {/* Bottom Info Bar */}
-      {!isSyncedPlaying && !isComplete && (
-          <div className="hidden sm:flex absolute bottom-0 left-0 right-0 p-4 bg-black/70 z-30 justify-between items-end border-t border-rule">
-              <div className="readout text-brass space-y-1">
-                 <div className="flex items-center gap-2"><Activity size={10} className="animate-pulse" /> {'>'} ANALYSIS_THREAD_01: ACTIVE</div>
-                 <div className="flex items-center gap-2"><Radio size={10} /> {'>'} AUDIO_TRANSCRIPT: PROCESSING</div>
-              </div>
-              <div className="flex gap-1">
-                 <div className="w-1 h-3 bg-brass opacity-40 animate-[pulse_0.5s_infinite]"></div>
-                 <div className="w-1 h-5 bg-brass opacity-60 animate-[pulse_0.7s_infinite]"></div>
-                 <div className="w-1 h-2 bg-brass opacity-30 animate-[pulse_0.4s_infinite]"></div>
-                 <div className="w-1 h-4 bg-brass opacity-80 animate-[pulse_0.6s_infinite]"></div>
-                 <div className="w-1 h-3 bg-brass opacity-50 animate-[pulse_0.5s_infinite]"></div>
-              </div>
-          </div>
-      )}
     </div>
   );
 };

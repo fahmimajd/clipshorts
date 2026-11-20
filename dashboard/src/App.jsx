@@ -952,6 +952,10 @@ function App() {
           if (data.partial) setPartialJob(data.partial);
           setQueueInfo(data.status === 'queued' && data.queue ? data.queue : null);
           nextDelay = data.status === 'queued' ? 5000 : 2000;
+          if (data.logs) {
+            setLogs(data.logs);
+            setLogTimes(data.log_times || []);
+          }
 
           if (data.status === 'completed') {
             setQueueInfo(null);
@@ -962,15 +966,9 @@ function App() {
             setStatus('error');
             const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
             setJobError(readableError(errorMsg));
-            setLogs(prev => [...prev, "Error: " + errorMsg]);
+            if (!data.logs?.length) setLogs(prev => [...prev, "Error: " + errorMsg]);
             stop();
             refreshMe();
-          } else {
-            // Update logs if available
-            if (data.logs) {
-              setLogs(data.logs);
-              setLogTimes(data.log_times || []);
-            }
           }
         } catch (e) {
           console.error("Polling error", e);
@@ -2255,7 +2253,7 @@ function App() {
                 <div className="mb-4 sm:mb-6 flex items-center justify-between gap-2">
                   <h2 className="text-sm font-medium text-ink lowercase flex items-center gap-2">
                     <Activity className={`text-brass ${status === 'processing' ? 'animate-pulse' : ''}`} size={18} />
-                    Live Analysis
+                    Clipping job
                   </h2>
                   <span className={status === 'processing' ? 'badge-brass' :
                     status === 'complete' ? 'badge-ok' :
@@ -2331,19 +2329,6 @@ function App() {
                   />
                 )}
 
-                {/* Phones only. The scan box drops its invented telemetry at
-                    this size and the log terminal below starts collapsed, so
-                    without this the screen would say nothing about what the job
-                    is actually doing. The log tail is the real answer. */}
-                {status === 'processing' && (
-                  <div className="sm:hidden mb-3 flex items-start gap-2 text-xs text-ink2 min-w-0">
-                    <Loader2 size={14} className="animate-spin text-brass shrink-0 mt-px" />
-                    <span className="min-w-0 leading-snug break-words">
-                      {logs.length ? logs[logs.length - 1] : 'starting up…'}
-                    </span>
-                  </div>
-                )}
-
                 {/* The render is dead time: the user is watching a progress bar
                     with nothing to do, so this is where the one star ask goes. */}
                 {status === 'processing' && (
@@ -2352,13 +2337,27 @@ function App() {
                   </div>
                 )}
 
+                <div role="status" className="mb-3 shrink-0 rounded-input border border-rule bg-paper p-3">
+                  <p className="readout mb-1">Clipping progress</p>
+                  <p className="text-sm font-medium text-ink">
+                    {status === 'complete' ? 'Clipping finished'
+                      : status === 'error' ? 'Clipping stopped'
+                        : queueInfo ? 'Waiting in queue' : progress.phase}
+                  </p>
+                  {status === 'processing' && !queueInfo && Object.keys(progress.activities).length > 0 && (
+                    <p className="mt-1 text-xs leading-relaxed text-ink2 tabular-nums">
+                      {Object.entries(progress.activities).map(([label, count]) => `${label} (${count})`).join(' · ')}
+                    </p>
+                  )}
+                </div>
+
                 {/* Logs Terminal */}
                 <div className={`bg-paper rounded-card border border-rule overflow-hidden flex flex-col transition-all duration-500 ${status === 'complete' ? `min-h-0 opacity-50 hover:opacity-100 ${logsVisible ? 'h-32' : 'h-auto'}` : `flex-1 ${logsVisible ? 'min-h-[160px] sm:min-h-[200px]' : 'min-h-0 flex-none'}`}`}>
                   <button
                     type="button"
                     onClick={() => setLogsVisible(!logsVisible)}
                     aria-expanded={logsVisible}
-                    className="w-full px-3.5 sm:px-4 py-2.5 border-b border-rule flex items-center justify-between gap-2 bg-paper2 shrink-0 text-left"
+                    className="w-full min-h-11 px-3.5 sm:px-4 py-2.5 border-b border-rule flex items-center justify-between gap-2 bg-paper2 shrink-0 text-left cursor-pointer hover:bg-paper3 active:translate-y-px"
                   >
                     <span className="readout flex items-center gap-2">
                       <Terminal size={12} /> System Logs

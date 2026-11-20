@@ -1355,7 +1355,7 @@ def finalize_clip_passthrough(input_video, final_output_video):
 
 
 def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=None,
-                      plan_only=False, mark=False, style=None):
+                      plan_only=False, mark=False, style=None, *, clip_number=None):
     """Burn the default caption style onto a finished clip.
 
     ``split_ranges``: (start, end) stretches, in clip seconds, rendered with
@@ -1448,6 +1448,8 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=
             marked = (watermark_logo_path(), watermark_filter,
                       os.path.join(output_dir, watermarked.marked_name(out_path)))
         try:
+            if clip_number is not None:
+                print(f"Adding subtitles to clip {clip_number}", flush=True)
             _subs.burn_subtitles(
                 clip_path, ass_path, out_path,
                 alignment=style["alignment"], fontsize=style["font_size"],
@@ -1466,7 +1468,7 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=
         return None
 
 
-def auto_hook_clip(clip_path, clip, captions=None, mark=False):
+def auto_hook_clip(clip_path, clip, captions=None, mark=False, *, clip_number=None):
     """Burn the clip's Gemini hook text as a DERIVED file (AUTO_HOOK=1).
 
     Writes ``hooked_<ts>_<clip filename>`` next to the canonical clip, exactly
@@ -1524,6 +1526,8 @@ def auto_hook_clip(clip_path, clip, captions=None, mark=False):
                 marked = (watermark_logo_path(), watermark_filter,
                           os.path.join(output_dir, watermarked.marked_name(captioned)))
             try:
+                if clip_number is not None:
+                    print(f"Adding subtitles and hook to clip {clip_number}", flush=True)
                 note(add_hook_to_video(clip_path, text, out_path, duration=seconds,
                                        style=style, also=(vf, captioned), mark=marked,
                                        **place))
@@ -1543,6 +1547,8 @@ def auto_hook_clip(clip_path, clip, captions=None, mark=False):
                 for partial in (captioned, marked[2] if marked else None):
                     if partial and os.path.exists(partial):
                         os.remove(partial)
+        if clip_number is not None:
+            print(f"Adding hook to clip {clip_number}", flush=True)
         note(add_hook_to_video(clip_path, text, out_path, duration=seconds,
                                style=style, **place))
         print(f"   🪝 Hook burned ({style}, {seconds:g}s): {text}")
@@ -3096,7 +3102,8 @@ if __name__ == '__main__':
                                                      split_ranges=split_ranges, plan_only=True,
                                                      style=cap_style)
                         hooked = auto_hook_clip(base_path, clip, captions=plan,
-                                                mark=os.environ.get("WATERMARK") == "1")
+                                                mark=os.environ.get("WATERMARK") == "1",
+                                                clip_number=i + 1)
                         if hooked:
                             deliver_path, clip['auto_hook'] = hooked
                             captioned = clip['auto_hook'].pop("_captioned", None)
@@ -3106,7 +3113,7 @@ if __name__ == '__main__':
                                 deliver_path, words, w_start, w_end,
                                 split_ranges=split_ranges,
                                 mark=os.environ.get("WATERMARK") == "1",
-                                style=cap_style)
+                                style=cap_style, clip_number=i + 1)
                         served = captioned or deliver_path
                         if os.environ.get("WATERMARK") == "1":
                             served = mark_delivery(served)
@@ -3146,6 +3153,7 @@ if __name__ == '__main__':
                     i = futures[future]
                     try:
                         if not future.result():
+                            print(f"   ❌ Clip {i+1} failed to render")
                             failed.append(i)
                     except Exception as e:
                         print(f"   ❌ Clip {i+1} failed: {type(e).__name__}: {e}")

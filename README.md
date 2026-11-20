@@ -67,6 +67,8 @@ Paste a YouTube link or upload a file. OpenShorts finds the strongest moments of
 
 Every clip opens in a real editor: source and program monitors side by side with the full transcript. Click a word to set a cut, add segments, change the framing and re-render in seconds.
 
+Above **System Logs**, **Clipping progress** shows what the job is doing, from preparing the source and selecting moments to rendering and adding subtitles. When clips render in parallel, the summary counts how many are at each active stage.
+
 ![The clip editor with source monitor, program monitor, transcript and segments](dashboard/public/screens/app-editor.webp)
 
 ### 2. Autopilot (Cloud)

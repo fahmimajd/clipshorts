@@ -32,7 +32,7 @@ _RULES = [
     (re.compile(r'^⏳ On the free plan a video gets'), None, None),
     # The download waits for the YouTube account (app._schedule_auto_retry).
     (re.compile(r'^⏳ YouTube is limiting downloads'), None, None),
-    (re.compile(r'Download attempt'), '📥 Downloading video…', 'download'),
+    (re.compile(r'Download attempt|^📥 Downloading video'), '📥 Downloading video…', 'download'),
     (re.compile(r'\[download\]\s+(\d+)(?:\.\d+)?% of'), '📥 Downloading video… {0}%', 'download'),
     (re.compile(r'downloading only the first (\d+) min'),
      '✂️ Long video: downloading the first {0} min', None),
@@ -42,12 +42,15 @@ _RULES = [
     # Live transcription progress emitted by transcribe_backends.
     (re.compile(r'Transcribing… (\d+)%'), '🎙️ Transcribing audio… {0}%', 'asr'),
     (re.compile(r'Transcribing (video|audio)'), '🎙️ Transcribing audio…', 'asr'),
-    (re.compile(r'Analyzing with (?:Gemini|local LLM)'), '🤖 Finding the best moments…', None),
+    (re.compile(r'Analyzing with (?:Gemini|local LLM|OpenAI-compatible provider)'),
+     '🤖 Finding the best moments…', None),
     (re.compile(r'Silent video — analyzing'), '🎥 No speech — finding moments in the picture…', None),
     (re.compile(r'Choosing a layout'), '🎛️ Choosing the layout…', None),
     (re.compile(r'Found (\d+) (?:viral )?clips'), '🔥 Found {0} clips!', None),
     (re.compile(r'Processing Clip (\d+)'), '🎬 Creating clip {0}…', None),
     (re.compile(r'Clip (\d+) framed'), '🎞️ Clip {0} framed', None),
+    (re.compile(r'^(Adding (?:subtitles and hook|subtitles|hook) to clip \d+)$'), '{0}', None),
+    (re.compile(r'^🔁 Retrying clip (\d+) once'), '🔁 Retrying clip {0}', None),
     (re.compile(r'Clip (\d+) ready'), '✅ Clip {0} ready', None),
 ]
 
