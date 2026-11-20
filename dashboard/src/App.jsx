@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, Rocket } from 'lucide-react';
+import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, Scissors, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, Rocket } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import ClipProviderSettings from './components/ClipProviderSettings';
 import MediaInput from './components/MediaInput';
@@ -427,6 +427,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
   // Mobile only: the full nav lives in a drawer behind the header's menu button.
   const [navOpen, setNavOpen] = useState(false);
+  const navDrawerRef = useRef(null);
   // Reopened-project state (paid mode): per-clip {index, server_file, active_layers}
   // restored from the backend so ResultCards resume editing where they left off.
   const [projectState, setProjectState] = useState(null);
@@ -1464,7 +1465,7 @@ function App() {
   // drawer, and the bottom tab bar. `short` is the tab-bar label — the full one
   // wraps to two lines in a 5-up bar on a 360px phone.
   const navItems = [
-    { id: 'dashboard', ord: '01', icon: LayoutDashboard, label: 'Clip Generator', short: 'clips', primary: true },
+    { id: 'dashboard', ord: '01', icon: Scissors, label: 'Clip Generator', short: 'clips', primary: true },
     // Cloud only: it runs on the managed pipeline and the Upload-Post connection.
     ...(billingEnabled ? [{ id: 'autopilot', ord: '02', icon: Rocket, label: 'Autopilot', short: 'autopilot', isNew: true }] : []),
     { id: 'saasshorts', ord: '03', icon: Sparkles, label: 'AI Shorts', short: 'ai shorts', byok: true, primary: true },
@@ -1476,29 +1477,35 @@ function App() {
   ];
   const activeNav = navItems.find((n) => n.id === activeTab);
 
-  // Escape closes the mobile drawer. The shell itself is overflow-hidden, so
-  // there is no body scroll to lock behind it.
   useEffect(() => {
     if (!navOpen) return;
-    const onKey = (e) => { if (e.key === 'Escape') setNavOpen(false); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    const desktop = window.matchMedia('(min-width: 768px)');
+    const closeOnDesktop = () => { if (desktop.matches) navDrawerRef.current?.close(); };
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => desktop.removeEventListener('change', closeOnDesktop);
   }, [navOpen]);
+
+  const openNav = (e) => {
+    e.currentTarget.focus();
+    navDrawerRef.current.showModal();
+    setNavOpen(true);
+  };
 
   const goToTab = (id) => {
     if (tutorialLock && id !== 'dashboard') return;
     setActiveTab(id);
-    setNavOpen(false);
+    navDrawerRef.current?.close();
   };
   const tabLocked = (id) => tutorialLock && id !== 'dashboard';
 
   // Shared footer links (landing, repo, pricing, contact) — same list in the
   // desktop rail and the mobile drawer, so they can never drift apart.
-  const NavFooterLinks = ({ collapsed = false }) => (
+  const renderNavFooterLinks = (collapsed = false) => (
     <>
       <a
         href="#landing"
-        className="flex items-center gap-2 px-3 py-2 text-xs lowercase text-muted hover:text-ink2 transition-colors"
+        aria-label="landing page"
+        className="flex min-h-11 items-center gap-2 rounded-input px-3 text-xs text-muted hover:bg-paper3 hover:text-ink active:translate-y-px"
       >
         <Globe size={14} className="shrink-0" />
         <span className={collapsed ? 'hidden lg:block truncate' : 'truncate'}>landing page</span>
@@ -1507,7 +1514,8 @@ function App() {
         href="https://github.com/mutonby/openshorts"
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center gap-2 px-3 py-2 text-xs lowercase text-muted hover:text-ink2 transition-colors"
+        aria-label="open source (GitHub)"
+        className="flex min-h-11 items-center gap-2 rounded-input px-3 text-xs text-muted hover:bg-paper3 hover:text-ink active:translate-y-px"
       >
         <svg height="14" viewBox="0 0 16 16" version="1.1" width="14" aria-hidden="true" fill="currentColor" className="shrink-0"><path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
         <span className={collapsed ? 'hidden lg:block truncate' : 'truncate'}>open source</span>
@@ -1515,7 +1523,8 @@ function App() {
       {billingEnabled && (
         <a
           href="#/pricing"
-          className="flex items-center gap-2 px-3 py-2 text-xs lowercase text-muted hover:text-ink2 transition-colors"
+          aria-label="plans and pricing"
+          className="flex min-h-11 items-center gap-2 rounded-input px-3 text-xs text-muted hover:bg-paper3 hover:text-ink active:translate-y-px"
         >
           <Sparkles size={14} className="shrink-0" />
           <span className={collapsed ? 'hidden lg:block truncate' : 'truncate'}>plans &amp; pricing</span>
@@ -1523,7 +1532,8 @@ function App() {
       )}
       <a
         href="mailto:info@openshorts.app"
-        className="flex items-center gap-2 px-3 py-2 text-xs lowercase text-muted hover:text-ink2 transition-colors"
+        aria-label="info@openshorts.app"
+        className="flex min-h-11 items-center gap-2 rounded-input px-3 text-xs text-muted hover:bg-paper3 hover:text-ink active:translate-y-px"
       >
         <Mail size={14} className="shrink-0" />
         <span className={collapsed ? 'hidden lg:block truncate' : 'truncate'}>info@openshorts.app</span>
@@ -1533,97 +1543,100 @@ function App() {
 
   // Desktop rail: icon-only from md, labelled from lg. Below md it is gone
   // entirely — an unlabelled 80px rail ate a fifth of a phone screen.
-  const Sidebar = () => (
-    <div className="hidden md:flex w-20 lg:w-64 bg-paper2 border-r border-rule flex-col h-full shrink-0 transition-all duration-300">
-      <a href="#app" onClick={() => goToTab('dashboard')} className="p-6 flex items-center gap-3" title="openshorts home">
-        <div className="w-8 h-8 bg-paper3 rounded-input flex items-center justify-center shrink-0 overflow-hidden border border-rule">
-          <img src="/logo-openshorts.png" alt="Logo" className="w-full h-full object-cover" />
-        </div>
-        <span className="font-display lowercase text-lg text-ink hidden lg:block">openshorts</span>
+  const renderSidebar = () => (
+    <aside className="hidden md:flex w-[4.5rem] lg:w-56 bg-paper2 border-r border-rule flex-col h-full shrink-0">
+      <a href="#app" onClick={() => goToTab('dashboard')} className="h-16 shrink-0 flex items-center justify-center gap-3 lg:justify-start lg:px-5 focus-visible:-outline-offset-2" aria-label="OpenShorts home">
+        <img src="/logo-openshorts.png" alt="" width={32} height={32} className="rounded-input border border-rule shrink-0" />
+        <span className="font-display text-xl text-ink hidden lg:block">openshorts</span>
       </a>
 
-      <nav className="flex-1 px-4 py-4 space-y-1">
+      <nav aria-label="Workspace" className="flex-1 overflow-y-auto custom-scrollbar px-2.5 lg:px-3 py-3 space-y-1">
+        <p className="hidden lg:block readout px-3 pb-2">workspace</p>
         {navItems.map((item) => {
           const NavIcon = item.icon;
           const isActive = activeTab === item.id;
           return (
-            <button
-              key={item.id}
-              data-tutorial={item.id === 'dashboard' ? 'nav-clips' : undefined}
-              onClick={() => goToTab(item.id)}
-              title={tabLocked(item.id) ? 'Finish your first clips to unlock' : item.label}
-              disabled={tabLocked(item.id)}
-              className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-input transition-colors ${isActive ? 'bg-paper3 text-ink' : 'text-muted hover:text-ink2 hover:bg-paper3/50'} ${tabLocked(item.id) ? 'opacity-40 cursor-not-allowed hover:bg-transparent hover:text-muted' : ''}`}
-            >
-              {isActive && (
-                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-brass rounded-full" aria-hidden="true" />
+            <React.Fragment key={item.id}>
+              {item.id === (billingEnabled && isSignedIn ? 'history' : 'settings') && (
+                <div className="mt-3 pt-3 border-t border-rule">
+                  <p className="hidden lg:block readout px-3 pb-1">manage</p>
+                </div>
               )}
-              <NavIcon size={18} className={`shrink-0 ${isActive ? 'text-brass' : ''}`} />
-              <span className="text-sm lowercase hidden lg:block flex-1 text-left truncate">{item.label}</span>
-              {tabLocked(item.id)
-                ? <Lock size={12} className="shrink-0 hidden lg:block" />
-                : item.byok ? <span className="readout hidden lg:block">BYOK</span>
-                  : item.isNew ? <span className="badge-brass hidden lg:block">new</span> : null}
-              <span className="readout hidden lg:block">{item.ord}</span>
-            </button>
+              <button
+                type="button"
+                data-tutorial={item.id === 'dashboard' ? 'nav-clips' : undefined}
+                onClick={() => goToTab(item.id)}
+                aria-label={item.label}
+                aria-current={isActive ? 'page' : undefined}
+                title={tabLocked(item.id) ? 'Finish your first clips to unlock' : item.label}
+                disabled={tabLocked(item.id)}
+                className={`relative w-full min-h-11 flex items-center justify-center lg:justify-start gap-2 px-2.5 rounded-input ${isActive ? 'bg-paper3 text-ink font-semibold' : 'text-muted enabled:hover:text-ink enabled:hover:bg-paper3'} enabled:active:translate-y-px disabled:cursor-not-allowed`}
+              >
+                {isActive && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-brass rounded-full" aria-hidden="true" />
+                )}
+                <NavIcon size={17} aria-hidden="true" className={`shrink-0 ${isActive ? 'text-brass' : ''}`} />
+                <span className="text-sm lowercase hidden lg:block flex-1 text-left">{item.label}</span>
+                {tabLocked(item.id)
+                  ? <Lock size={12} className="shrink-0 hidden lg:block" />
+                  : item.byok ? <span className="readout hidden lg:block">BYOK</span>
+                    : item.isNew ? <span className="badge-brass hidden lg:block">new</span> : null}
+              </button>
+            </React.Fragment>
           );
         })}
       </nav>
 
-      <div className="p-4 border-t border-rule space-y-1">
-        <NavFooterLinks collapsed />
-      </div>
-    </div>
+      <footer className="p-2.5 lg:p-3 border-t border-rule">
+        {renderNavFooterLinks(true)}
+      </footer>
+    </aside>
   );
 
-  // Mobile drawer: the complete nav, reachable from the header's menu button.
-  const MobileNavDrawer = () => (
-    <div
-      className="md:hidden fixed inset-0 z-[90] flex"
-      role="dialog"
-      aria-modal="true"
+  const renderMobileNavDrawer = () => (
+    <dialog
+      ref={navDrawerRef}
+      id="workspace-navigation"
       aria-label="Navigation"
+      onClose={() => setNavOpen(false)}
+      onClick={(e) => { if (e.target === e.currentTarget) e.currentTarget.close(); }}
+      className="md:hidden fixed inset-y-0 left-0 right-auto m-0 h-full max-h-none w-72 max-w-[90vw] bg-paper2 text-ink p-0 backdrop:bg-black/70"
     >
-      <div
-        className="absolute inset-0 bg-black/60 animate-fade"
-        onClick={() => setNavOpen(false)}
-        aria-hidden="true"
-      />
-      <div className="relative w-[17rem] max-w-[82vw] h-full bg-paper2 border-r border-rule flex flex-col animate-slide-in-left">
+      <div className="h-full flex flex-col border-r border-rule">
         <div className="flex items-center justify-between px-5 h-14 border-b border-rule shrink-0">
-          <a href="#app" className="flex items-center gap-2.5" onClick={() => goToTab('dashboard')}>
-            <div className="w-7 h-7 bg-paper3 rounded-input overflow-hidden border border-rule shrink-0">
-              <img src="/logo-openshorts.png" alt="" className="w-full h-full object-cover" />
-            </div>
+          <a href="#app" className="flex min-h-11 items-center gap-2.5" onClick={() => goToTab('dashboard')}>
+            <img src="/logo-openshorts.png" alt="" width={28} height={28} className="rounded-input border border-rule shrink-0" />
             <span className="font-display lowercase text-lg text-ink">openshorts</span>
           </a>
           <button
-            onClick={() => setNavOpen(false)}
+            type="button"
+            onClick={() => navDrawerRef.current.close()}
             aria-label="close navigation"
-            className="p-2 -mr-2 text-muted hover:text-ink transition-colors"
+            className="grid place-items-center min-w-11 min-h-11 -mr-2 rounded-input text-muted hover:text-ink hover:bg-paper3 active:translate-y-px"
           >
-            <X size={18} />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto custom-scrollbar px-3 py-3 space-y-1">
+        <nav aria-label="Workspace" className="flex-1 overflow-y-auto custom-scrollbar px-3 py-3 space-y-1">
           {navItems.map((item) => {
             const NavIcon = item.icon;
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
+                type="button"
                 onClick={() => goToTab(item.id)}
                 disabled={tabLocked(item.id)}
                 aria-current={isActive ? 'page' : undefined}
                 title={tabLocked(item.id) ? 'Finish your first clips to unlock' : undefined}
-                className={`relative w-full flex items-center gap-3 px-3 py-3 rounded-input transition-colors ${isActive ? 'bg-paper3 text-ink' : 'text-muted active:bg-paper3/60'} ${tabLocked(item.id) ? 'opacity-40 cursor-not-allowed' : ''}`}
+                className={`relative w-full min-h-11 flex items-center gap-3 px-3 py-2 rounded-input ${isActive ? 'bg-paper3 text-ink font-semibold' : 'text-muted enabled:hover:bg-paper3 enabled:hover:text-ink'} enabled:active:translate-y-px disabled:cursor-not-allowed`}
               >
                 {isActive && (
                   <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-brass rounded-full" aria-hidden="true" />
                 )}
-                <NavIcon size={18} className={`shrink-0 ${isActive ? 'text-brass' : ''}`} />
-                <span className="text-[0.95rem] lowercase flex-1 text-left truncate">{item.label}</span>
+                <NavIcon size={17} aria-hidden="true" className={`shrink-0 ${isActive ? 'text-brass' : ''}`} />
+                <span className="text-sm lowercase flex-1 text-left">{item.label}</span>
                 {tabLocked(item.id)
                   ? <Lock size={12} className="shrink-0" />
                   : item.byok ? <span className="readout shrink-0">BYOK</span>
@@ -1633,21 +1646,20 @@ function App() {
           })}
         </nav>
 
-        <div className="px-3 py-3 border-t border-rule space-y-0.5 safe-bottom shrink-0">
-          <NavFooterLinks />
-        </div>
+        <footer className="px-3 py-2 border-t border-rule safe-bottom shrink-0">
+          {renderNavFooterLinks()}
+        </footer>
       </div>
-    </div>
+    </dialog>
   );
 
   // Bottom tab bar: the four everyday destinations plus "more" for the rest.
-  // It is a flex sibling of the scrolling pane rather than `fixed`, so nothing
-  // ever hides behind it and no pane needs compensating padding.
-  const MobileTabBar = () => {
+  // The bottom bar sits alongside the scrolling pane, so it cannot cover content.
+  const renderMobileTabBar = () => {
     const tabs = navItems.filter((n) => n.primary);
     const moreActive = !tabs.some((t) => t.id === activeTab);
     return (
-      <nav className="md:hidden shrink-0 border-t border-rule bg-paper2/95 backdrop-blur-sm safe-bottom">
+      <nav aria-label="Quick navigation" className="md:hidden shrink-0 border-t border-rule bg-paper2 safe-bottom">
         <div className="flex items-stretch">
           {tabs.map((item) => {
             const NavIcon = item.icon;
@@ -1655,25 +1667,28 @@ function App() {
             return (
               <button
                 key={item.id}
+                type="button"
                 data-tutorial={item.id === 'dashboard' ? 'nav-clips' : undefined}
                 onClick={() => goToTab(item.id)}
                 disabled={tabLocked(item.id)}
                 aria-current={isActive ? 'page' : undefined}
                 title={tabLocked(item.id) ? 'Finish your first clips to unlock' : undefined}
-                className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] transition-colors ${isActive ? 'text-ink' : 'text-muted active:text-ink2'} ${tabLocked(item.id) ? 'opacity-40 cursor-not-allowed' : ''}`}
+                className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-14 border-t-2 ${isActive ? 'text-ink border-brass font-semibold' : 'text-muted border-transparent enabled:hover:text-ink'} enabled:active:bg-paper3 disabled:cursor-not-allowed focus-visible:-outline-offset-2`}
               >
-                <NavIcon size={19} className={isActive ? 'text-brass' : ''} />
+                <NavIcon size={18} aria-hidden="true" className={isActive ? 'text-brass' : ''} />
                 <span className="text-[10.5px] lowercase leading-none truncate max-w-full px-0.5">{item.short}</span>
               </button>
             );
           })}
           <button
-            onClick={() => setNavOpen(true)}
+            type="button"
+            onClick={openNav}
             aria-label="more sections"
             aria-expanded={navOpen}
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-[56px] transition-colors ${moreActive ? 'text-ink' : 'text-muted active:text-ink2'}`}
+            aria-controls="workspace-navigation"
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 min-h-14 border-t-2 ${moreActive ? 'text-ink border-brass font-semibold' : 'text-muted border-transparent hover:text-ink'} active:bg-paper3 focus-visible:-outline-offset-2`}
           >
-            <Menu size={19} className={moreActive ? 'text-brass' : ''} />
+            <Menu size={18} aria-hidden="true" className={moreActive ? 'text-brass' : ''} />
             <span className="text-[10.5px] lowercase leading-none">more</span>
           </button>
         </div>
@@ -1686,29 +1701,31 @@ function App() {
        viewport ever gets, so a h-screen shell hides its own bottom bar behind
        the browser chrome until the user scrolls. */
     <div className="flex h-screen supports-[height:100dvh]:h-[100dvh] bg-paper overflow-hidden">
-      <Sidebar />
-      {navOpen && <MobileNavDrawer />}
+      {renderSidebar()}
+      {renderMobileNavDrawer()}
 
       <main className="flex-1 min-w-0 flex flex-col h-full overflow-hidden relative">
         {/* Top Header */}
-        <header className="h-14 border-b border-rule bg-paper flex items-center justify-between gap-2 px-3 sm:px-6 shrink-0 z-10">
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-            {/* Mobile: the drawer handle, and the section name the icon rail
-                used to carry. Without it a phone has no "where am I". */}
+        <header className="min-h-16 border-b border-rule bg-paper flex items-center justify-between gap-x-3 gap-y-1 flex-wrap px-3 py-1 sm:px-6 shrink-0 z-10">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
-              onClick={() => setNavOpen(true)}
+              type="button"
+              onClick={openNav}
               aria-label="open navigation"
-              className="md:hidden -ml-1 p-2 rounded-input text-muted active:bg-paper3 transition-colors shrink-0"
+              aria-expanded={navOpen}
+              aria-controls="workspace-navigation"
+              className="md:hidden grid place-items-center min-w-11 min-h-11 -ml-1 rounded-input text-muted hover:bg-paper3 hover:text-ink active:translate-y-px shrink-0"
             >
-              <Menu size={20} />
+              <Menu size={18} aria-hidden="true" />
             </button>
-            <span data-tutorial="nav-clips" className="md:hidden font-display lowercase text-base text-ink truncate">
+            {activeNav && <span className="hidden sm:inline readout tabular-nums">{activeNav.ord} /</span>}
+            <span className="lowercase text-sm font-medium text-ink">
               {activeNav?.label || 'openshorts'}
             </span>
             {status !== 'idle' && (
               <button
                 onClick={handleReset}
-                className="btn-quiet px-3 py-1.5 text-xs shrink-0"
+                className="btn-quiet min-h-11 min-w-11 px-3 py-1.5 text-xs shrink-0 active:translate-y-px"
                 aria-label="New Project"
               >
                 <Plus size={14} />
@@ -1717,7 +1734,7 @@ function App() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          <div className="flex items-center flex-wrap gap-2 sm:gap-3 min-w-0">
             {userProfiles.length > 0 && (
               <UserProfileSelector
                 profiles={userProfiles}
@@ -1738,13 +1755,13 @@ function App() {
             )}
             {billingEnabled && isSignedIn && !isManaged && (
               <button onClick={() => setShowPlanChoice(true)}
-                className="btn-primary px-4 py-2 text-xs">
+                className="btn-primary min-h-11 px-4 py-2 text-xs">
                 Choose a plan
               </button>
             )}
             {billingEnabled && !isSignedIn && (
               <button onClick={() => setShowLogin(true)}
-                className="btn-ghost px-4 py-2 text-xs">
+                className="btn-ghost min-h-11 px-4 py-2 text-xs">
                 Sign in
               </button>
             )}
@@ -1766,7 +1783,7 @@ function App() {
         </header>
 
         {clipProviderMissing && activeTab !== 'settings' && (
-          <div className="mx-3 sm:mx-6 mt-3 px-3.5 sm:px-4 py-3 bg-paper2 border border-rule rounded-card flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 shrink-0 animate-fade">
+          <div className="mx-3 sm:mx-6 mt-3 px-3.5 sm:px-4 py-2.5 bg-paper2 border border-rule rounded-card flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 shrink-0">
             <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 text-sm text-ink2 min-w-0 flex-1">
               <KeyRound size={16} className="shrink-0 text-warn mt-0.5 sm:mt-0" />
               <div className="min-w-0">
@@ -2264,44 +2281,31 @@ function App() {
 
           {/* View: Dashboard (Idle) */}
           {activeTab === 'dashboard' && status === 'idle' && (
-            <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
-              <div className="min-h-full flex flex-col items-center justify-center px-4 py-5 sm:p-6">
-              {/* On a phone the hero used to fill the fold on its own and push
-                  the uploader — the whole point of the screen — below it. The
-                  eyebrow, the display size and the gaps all shrink first. */}
-              <div className="max-w-xl w-full text-center space-y-5 sm:space-y-8">
-                <div className="space-y-2.5 sm:space-y-4">
-                  <p className="eyebrow hidden sm:block">01 · CLIP GENERATOR</p>
-                  <h1 className="font-display lowercase text-3xl sm:text-4xl md:text-5xl text-ink">
-                    Create Viral Shorts
+            <div className="h-full overflow-y-auto custom-scrollbar">
+              <div className="max-w-5xl mx-auto px-4 py-5 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+                <div className="mb-5 sm:mb-7">
+                  <h1 className="font-display lowercase text-3xl sm:text-4xl text-ink leading-none">
+                    Make clips from a video
                   </h1>
-                  <p className="text-muted text-[15px] sm:text-lg leading-snug sm:leading-normal max-w-sm sm:max-w-none mx-auto">
-                    Drop your long-form video below to instantly generate viral clips with AI.
+                  <p className="mt-2.5 max-w-xl text-sm text-muted leading-relaxed">
+                    Add a video and choose an aspect ratio. Then generate clips to edit and export.
                   </p>
-                  {/* The same pipeline is an MCP server: point people at the
-                      one place that explains how to drive it from an agent. */}
-                  {!tutorialLock && (
-                  <p className="text-xs text-muted">
-                    Or let an agent do it:{' '}
-                    <a
-                      href={billingEnabled ? '#/account' : '#app'}
-                      onClick={(e) => { if (!billingEnabled) { e.preventDefault(); goToTab('settings'); } }}
-                      className="text-ink2 underline underline-offset-2 hover:text-brass transition-colors"
-                    >
-                      connect Claude, ChatGPT or n8n →
-                    </a>
-                  </p>
-                  )}
                 </div>
 
                 <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
 
-                <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8 text-muted text-xs sm:text-sm">
-                  <span className="flex items-center gap-2"><Youtube size={16} /> YouTube</span>
-                  <span className="flex items-center gap-2"><Instagram size={16} /> Instagram</span>
-                  <span className="flex items-center gap-2"><TikTokIcon size={16} /> TikTok</span>
-                </div>
-              </div>
+                {!tutorialLock && (
+                  <p className="mt-4 text-sm text-muted">
+                    Working from an agent?{' '}
+                    <a
+                      href={billingEnabled ? '#/account' : '#app'}
+                      onClick={(e) => { if (!billingEnabled) { e.preventDefault(); goToTab('settings'); } }}
+                      className="inline-flex items-center min-h-11 text-ink2 underline underline-offset-2 hover:text-ink active:translate-y-px"
+                    >
+                      Connect Claude, ChatGPT or n8n
+                    </a>
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -2699,7 +2703,7 @@ function App() {
 
         {/* Phone navigation. A flex sibling of the scrolling pane, not a fixed
             overlay, so content is never trapped behind it. */}
-        <MobileTabBar />
+        {renderMobileTabBar()}
 
       </main>
 

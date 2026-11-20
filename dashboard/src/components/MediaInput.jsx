@@ -154,56 +154,59 @@ export default function MediaInput({ onProcess, isProcessing }) {
     };
 
     return (
-        <div className="card p-4 sm:p-6 animate-fade">
-            <div className="flex gap-4 sm:gap-6 mb-6 border-b border-rule" data-tutorial="source-tabs">
-                <button
-                    onClick={() => setMode('file')}
-                    className={`flex items-center gap-2 pb-3 px-1 -mb-px border-b-2 text-sm lowercase whitespace-nowrap transition-colors ${mode === 'file'
-                        ? 'text-ink border-brass'
-                        : 'text-muted border-transparent hover:text-ink2'
-                        }`}
-                >
-                    <Upload size={16} className={`hidden sm:block ${mode === 'file' ? 'text-brass' : ''}`} />
-                    Upload File
-                </button>
-                {youtubeUrlEnabled && (
-                    <button
-                        onClick={() => setMode('url')}
-                        className={`flex items-center gap-2 pb-3 px-1 -mb-px border-b-2 text-sm lowercase whitespace-nowrap transition-colors ${mode === 'url'
-                            ? 'text-ink border-brass'
-                            : 'text-muted border-transparent hover:text-ink2'
-                            }`}
-                    >
-                        <Link2 size={16} className={`hidden sm:block ${mode === 'url' ? 'text-brass' : ''}`} />
-                        Video URL
-                    </button>
-                )}
-            </div>
+        <form className="rounded-card border border-rule2 bg-paper2" onSubmit={handleSubmit}>
+            <div className="grid gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] xl:gap-6">
+                <section aria-labelledby="clip-source-heading" className="min-w-0">
+                    <h2 id="clip-source-heading" className="text-sm font-semibold text-ink">source video</h2>
+                    <div className="flex gap-4 mb-3 border-b border-rule" data-tutorial="source-tabs">
+                        <button
+                            type="button"
+                            onClick={() => setMode('file')}
+                            aria-pressed={mode === 'file'}
+                            className={`inline-flex min-h-11 items-center gap-2 px-0.5 -mb-px border-b-2 text-sm lowercase hover:text-ink active:translate-y-px ${mode === 'file' ? 'text-ink font-medium border-brass' : 'text-muted border-transparent'}`}
+                        >
+                            <Upload size={16} aria-hidden="true" />
+                            Upload file
+                        </button>
+                        {youtubeUrlEnabled && (
+                            <button
+                                type="button"
+                                onClick={() => setMode('url')}
+                                aria-pressed={mode === 'url'}
+                                className={`inline-flex min-h-11 items-center gap-2 px-0.5 -mb-px border-b-2 text-sm lowercase hover:text-ink active:translate-y-px ${mode === 'url' ? 'text-ink font-medium border-brass' : 'text-muted border-transparent'}`}
+                            >
+                                <Link2 size={16} aria-hidden="true" />
+                                Video URL
+                            </button>
+                        )}
+                    </div>
 
-            <form onSubmit={handleSubmit}>
                 {mode === 'url' ? (
                     <div className="space-y-4" data-tutorial="drop-zone">
+                        <label htmlFor="clip-video-url" className="block text-sm lowercase text-ink2">video link</label>
                         <div className="relative">
                             <input
+                                id="clip-video-url"
                                 type="url"
                                 value={url}
                                 onChange={(e) => setUrl(e.target.value)}
-                                placeholder="https://... paste a video link"
-                                className="input-field pr-11"
+                                className="input-field clip-field min-h-11 !pr-12"
                                 required
                             />
                             <div className="absolute inset-y-0 right-2 flex items-center" ref={infoRef}>
                                 <button
                                     type="button"
                                     onClick={() => setShowInfo((v) => !v)}
+                                    onKeyDown={(e) => { if (e.key === 'Escape') setShowInfo(false); }}
                                     aria-label="Supported platforms"
-                                    className="p-1.5 text-muted hover:text-brass transition-colors"
+                                    aria-expanded={showInfo}
+                                    className="grid place-items-center min-w-11 min-h-11 rounded-input text-muted hover:bg-paper3 hover:text-ink active:translate-y-px"
                                 >
-                                    <Info size={16} />
+                                    <Info size={16} aria-hidden="true" />
                                 </button>
                                 {showInfo && (
-                                    <div className="absolute right-0 top-full mt-2 w-64 z-20 card p-4 text-left animate-fade">
-                                        <p className="eyebrow mb-2">Paste a link from</p>
+                                    <div className="absolute -right-2 top-full mt-2 w-64 max-w-[75vw] z-20 rounded-card border border-rule2 bg-paper3 p-4 text-left">
+                                        <p className="readout mb-2">Paste a link from</p>
                                         <div className="flex flex-wrap gap-1.5">
                                             {SUPPORTED_PLATFORMS.map((p) => (
                                                 <span key={p} className="text-xs px-2 py-0.5 rounded-full bg-paper3 text-ink2">
@@ -222,21 +225,21 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 ) : (
                     <div
                         data-tutorial="drop-zone"
-                        className={`border-2 border-dashed rounded-card p-6 sm:p-8 text-center transition-colors ${file ? 'border-brass' : 'border-rule2 hover:border-brass'
-                            }`}
+                        className={`border border-dashed rounded-input bg-paper text-left focus-within:outline focus-within:outline-2 focus-within:outline-brass ${file ? 'border-brass p-3' : 'border-muted hover:border-brass'}`}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={handleDrop}
                     >
                         {file ? (
-                            <div className="flex items-center justify-center gap-3 text-ok min-w-0">
+                            <div className="flex items-center gap-3 text-ink min-w-0">
                                 <FileVideo size={18} className="shrink-0" />
                                 <span className="font-medium truncate">{file.name}</span>
                                 <button
                                     type="button"
                                     onClick={() => setFile(null)}
-                                    className="p-1 text-muted hover:text-ink hover:bg-paper3 rounded-full transition-colors"
+                                    aria-label="remove video"
+                                    className="ml-auto shrink-0 grid place-items-center min-w-11 min-h-11 rounded-input text-muted hover:text-ink hover:bg-paper3 active:translate-y-px"
                                 >
-                                    <X size={16} />
+                                    <X size={16} aria-hidden="true" />
                                 </button>
                             </div>
                         ) : null}
@@ -247,16 +250,22 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             </p>
                         ) : null}
                         {!file && (
-                            <label className="cursor-pointer block">
+                            <label className="flex min-h-28 items-center gap-3 rounded-input p-3 sm:p-4 cursor-pointer hover:bg-paper3 active:bg-paper2">
                                 <input
                                     type="file"
                                     accept="video/*"
                                     onChange={(e) => setFile(e.target.files?.[0] || null)}
-                                    className="hidden"
+                                    aria-labelledby="clip-file-label"
+                                    className="sr-only"
+                                    aria-describedby="clip-file-hint"
                                 />
-                                <Upload className="mx-auto mb-3 text-muted" size={18} />
-                                <p className="text-ink2 lowercase">Click to upload or drag and drop</p>
-                                <p className="readout mt-2">MP4, MOV up to 500MB · at least {MIN_SOURCE_SECONDS}s long</p>
+                                <span className="grid size-10 shrink-0 place-items-center rounded-input bg-paper3 text-ink2" aria-hidden="true">
+                                    <Upload size={18} />
+                                </span>
+                                <span className="min-w-0">
+                                    <span id="clip-file-label" className="block text-sm font-medium text-ink">choose a video or drop it here</span>
+                                    <span id="clip-file-hint" className="block mt-1 text-xs text-muted">MP4 or MOV, up to 500 MB and at least {MIN_SOURCE_SECONDS} seconds</span>
+                                </span>
                             </label>
                         )}
                     </div>
@@ -269,15 +278,16 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     range={range}
                     onRangeChange={setRange}
                 />
+                </section>
 
                 {/* Output format selector */}
-                <div className="mt-5" data-tutorial="output-format">
-                    <p className="eyebrow mb-2">Output format</p>
-                    <div className="grid grid-cols-3 gap-2">
+                <section aria-labelledby="clip-format-heading" className="min-w-0 border-t border-rule pt-4 xl:border-t-0 xl:border-l xl:pl-6 xl:pt-0" data-tutorial="output-format">
+                    <h2 id="clip-format-heading" className="text-sm font-semibold text-ink mb-3 xl:mb-4">output format</h2>
+                    <div role="group" aria-labelledby="clip-format-heading" className="grid grid-cols-3 gap-2">
                         {[
-                            { value: 'vertical', label: '9:16', hint: 'Shorts · Reels · TikTok', w: 18, h: 32 },
+                            { value: 'vertical', label: '9:16', hint: 'Shorts, Reels, TikTok', w: 18, h: 32 },
                             { value: 'square', label: '1:1', hint: 'Feed posts', w: 28, h: 28 },
-                            { value: 'horizontal', label: '16:9', hint: 'Keep landscape · YouTube', w: 36, h: 20 },
+                            { value: 'horizontal', label: '16:9', hint: 'Landscape video', w: 36, h: 20 },
                         ].map((f) => {
                             const active = outputFormat === f.value;
                             return (
@@ -285,72 +295,70 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                     key={f.value}
                                     type="button"
                                     onClick={() => setOutputFormat(f.value)}
-                                    className={`py-3 px-2 rounded-input border flex flex-col items-center gap-2 transition-colors
-                                        ${active ? 'border-[color:var(--color-accent)] text-ink' : 'border-rule2 text-muted hover:border-[color:var(--color-accent)]'}`}
+                                    aria-pressed={active}
+                                    className={`py-3 px-1.5 sm:px-2 rounded-input border flex flex-col items-center gap-2 active:translate-y-px
+                                        ${active ? 'border-brass bg-paper3 text-ink' : 'border-muted bg-paper text-ink2 hover:bg-paper3 hover:text-ink'}`}
                                 >
-                                    {/* Aspect-ratio glyph */}
-                                    <span
-                                        className="rounded-[3px] border-2 transition-colors"
-                                        style={{
-                                            width: `${f.w}px`,
-                                            height: `${f.h}px`,
-                                            borderColor: active ? 'var(--color-accent)' : 'var(--color-rule-2)',
-                                            backgroundColor: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'transparent',
-                                        }}
-                                    />
-                                    <span className="block font-mono text-sm leading-none">{f.label}</span>
-                                    <span className="block text-[11px] sm:text-[10px] leading-tight text-center text-muted">{f.hint}</span>
+                                    <span className="grid h-8 place-items-center" aria-hidden="true">
+                                        <span className={`rounded-sm border-2 ${active ? 'border-brass bg-brass/10' : 'border-muted'}`} style={{ width: f.w, height: f.h }} />
+                                    </span>
+                                    <span className="font-mono text-sm tabular-nums">{f.label}</span>
+                                    <span className="text-xs leading-tight text-center text-muted">{f.hint}</span>
                                 </button>
                             );
                         })}
                     </div>
-                </div>
+                </section>
+            </div>
 
                 {/* Advanced generation controls — collapsed by default; blank = AI decides */}
-                <div className="mt-4">
+                <div className="border-t border-rule px-4 sm:px-6">
                     <button
                         type="button"
                         onClick={() => setShowAdvanced((v) => !v)}
-                        className="flex items-center gap-1.5 text-xs text-muted hover:text-ink2 lowercase transition-colors"
+                        aria-expanded={showAdvanced}
+                        aria-controls="clip-advanced-options"
+                        className="flex min-h-11 items-center gap-2 text-sm text-ink2 hover:text-ink lowercase active:translate-y-px"
                     >
-                        <ChevronDown size={14} className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+                        <ChevronDown size={15} aria-hidden="true" className={showAdvanced ? 'rotate-180' : ''} />
                         advanced options
                         {(targetClips || clipMinSeconds || clipMaxSeconds || !autoHook) && (
-                            <span className="text-brass">·</span>
+                            <span className="readout">custom</span>
                         )}
                     </button>
-                    {showAdvanced && (
-                        /* Stacked on a phone: three number fields side by side leaves
-                           ~100px each, which crushes both label and value. */
-                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-2 animate-fade">
+                    <div id="clip-advanced-options">
+                        {showAdvanced && <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pb-4">
                             <div>
-                                <p className="eyebrow mb-1.5">clips to aim for</p>
+                                <label htmlFor="clip-count" className="block mb-1.5 text-xs text-ink2">clips to aim for</label>
                                 <input
+                                    id="clip-count"
                                     type="number" min="1" max="15" step="1"
                                     value={targetClips}
                                     onChange={(e) => setTargetClips(e.target.value)}
                                     placeholder="auto"
-                                    className="input-field"
+                                    className="input-field clip-field"
                                 />
                             </div>
                             <div>
-                                <p className="eyebrow mb-1.5">min length (s)</p>
+                                <label htmlFor="clip-min-length" className="block mb-1.5 text-xs text-ink2">min length (s)</label>
                                 <input
+                                    id="clip-min-length"
                                     type="number" min="5" max="175" step="1"
                                     value={clipMinSeconds}
                                     onChange={(e) => setClipMinSeconds(e.target.value)}
                                     placeholder="15"
-                                    className="input-field"
+                                    className="input-field clip-field"
                                 />
                             </div>
                             <div>
-                                <p className="eyebrow mb-1.5">max length (s)</p>
+                                <label htmlFor="clip-max-length" className="block mb-1.5 text-xs text-ink2">max length (s)</label>
                                 <input
+                                    id="clip-max-length"
                                     type="number" min="10" max="180" step="1"
                                     value={clipMaxSeconds}
                                     onChange={(e) => setClipMaxSeconds(e.target.value)}
                                     placeholder="60"
-                                    className="input-field"
+                                    className="input-field clip-field"
                                 />
                             </div>
                             <p className="col-span-1 sm:col-span-3 text-[11px] leading-relaxed text-muted">
@@ -359,12 +367,12 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                 {plan === 'free' && ` The free plan makes the ${FREE_CLIPS_PER_VIDEO} to ${FREE_CLIPS_QUIET} best clips of each video, fewer while its queue is busy; plans get every clip, up to ${MAX_CLIPS_PER_VIDEO}.`}
                             </p>
                             <div className="col-span-1 sm:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-3 sm:pt-1 border-t border-rule">
-                                <span className="text-xs text-ink2">vertical layout</span>
+                                <label htmlFor="clip-vertical-layout" className="text-xs text-ink2">vertical layout</label>
                                 <select
+                                    id="clip-vertical-layout"
                                     value={layout}
                                     onChange={(e) => setLayout(e.target.value)}
-                                    className="input-field !w-auto text-xs py-1.5"
-                                    aria-label="vertical layout"
+                                    className="input-field clip-field !w-auto max-w-full min-h-11 text-xs !py-1.5 cursor-pointer"
                                 >
                                     <option value="auto">Auto (AI picks per video)</option>
                                     <option value="split">Two speakers stacked</option>
@@ -373,7 +381,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                 </select>
                             </div>
                             <div className="col-span-1 sm:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-3 sm:pt-1 border-t border-rule">
-                                <label className="flex items-center gap-2 text-xs text-ink2 cursor-pointer select-none">
+                                <label className="flex min-h-11 items-center gap-2 text-xs text-ink2 cursor-pointer select-none">
                                     <input
                                         type="checkbox"
                                         checked={autoHook}
@@ -383,19 +391,22 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                     auto hook titles on clips
                                 </label>
                                 {autoHook && (
-                                    <select
-                                        value={autoHookStyle}
-                                        onChange={(e) => setAutoHookStyle(e.target.value)}
-                                        className="input-field !w-auto text-xs py-1.5"
-                                    >
-                                        <option value="pill">Pills</option>
-                                        <option value="classic">Classic</option>
-                                        <option value="dark">Dark</option>
-                                        <option value="yellow">Yellow</option>
-                                        <option value="red">Red</option>
-                                        <option value="outline">Outline</option>
-                                        <option value="outline_yellow">Outline+</option>
-                                    </select>
+                                    <label className="flex flex-wrap items-center gap-2 text-xs text-ink2">
+                                        hook style
+                                        <select
+                                            value={autoHookStyle}
+                                            onChange={(e) => setAutoHookStyle(e.target.value)}
+                                            className="input-field clip-field !w-auto min-h-11 text-xs !py-1.5 cursor-pointer"
+                                        >
+                                            <option value="pill">Pills</option>
+                                            <option value="classic">Classic</option>
+                                            <option value="dark">Dark</option>
+                                            <option value="yellow">Yellow</option>
+                                            <option value="red">Red</option>
+                                            <option value="outline">Outline</option>
+                                            <option value="outline_yellow">Outline+</option>
+                                        </select>
+                                    </label>
                                 )}
                                 {autoHook && (
                                     <p className="w-full text-[11px] leading-relaxed text-muted">
@@ -404,11 +415,12 @@ export default function MediaInput({ onProcess, isProcessing }) {
                                     </p>
                                 )}
                             </div>
-                        </div>
-                    )}
+                        </div>}
+                    </div>
                 </div>
 
-                <label className="flex items-start gap-2.5 mt-5 text-left text-[13px] sm:text-xs leading-relaxed text-muted cursor-pointer select-none">
+            <div className="border-t border-rule bg-paper/50 rounded-b-card p-4 sm:px-6 sm:flex sm:items-center sm:justify-between sm:gap-6">
+                <label className="flex min-h-11 items-start gap-2.5 text-left text-xs leading-relaxed text-muted cursor-pointer select-none">
                     <input
                         type="checkbox"
                         checked={acknowledged}
@@ -424,20 +436,16 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     type="submit"
                     data-tutorial="generate"
                     disabled={isProcessing || !acknowledged || (mode === 'url' && !url) || (mode === 'file' && (!file || fileTooShort))}
-                    className="w-full btn-primary mt-4"
+                    className="w-full min-h-11 btn-primary mt-3 sm:mt-0 sm:w-auto sm:shrink-0"
                 >
                     {isProcessing ? (
                         <>
-                            <Loader2 size={16} className="animate-spin" />
-                            Processing Video...
+                            <Loader2 size={16} aria-hidden="true" className="motion-safe:animate-spin" />
+                            Processing video…
                         </>
-                    ) : (
-                        <>
-                            Generate Clips
-                        </>
-                    )}
+                    ) : 'Generate clips'}
                 </button>
-            </form>
-        </div>
+            </div>
+        </form>
     );
 }

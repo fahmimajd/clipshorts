@@ -25,6 +25,14 @@ atmospheric
 - Content pages (Legal): **Long Document** — single column, 65ch measure,
   inline headings, typographic links.
 
+### Clip Generator workbench
+
+- Keep the source and aspect ratio side by side when the workspace is wide enough; stack them in the same reading order on tablet and phone.
+- Give the uploader a full-width drop target within its column. Keep advanced options collapsed and place the rights check next to the final action when space allows.
+- Use the existing dark surfaces to keep the work area distinct from the navigation. Use brass to identify the current selection, keyboard focus and the primary action.
+- Use the serif for the task heading, Geist for controls and mono for aspect ratios and section ordinals so values are easy to scan.
+- Reuse the existing logo and navigation destinations; the tablet rail shows icons and the phone drawer gives them full labels.
+
 ## Theme tokens (Night Foundry)
 
 - `--color-paper`      oklch(13% 0.014 265)   — page canvas, late-night violet
