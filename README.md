@@ -237,6 +237,8 @@ Navigate to **`http://localhost:5175/#app`**. On Windows, if the dashboard still
 1. In **Settings**, choose a **Clip Generator AI provider** and add a Gemini API key if needed.
 2. In **Clip Generator**, paste a YouTube URL or upload a video. Generate, edit and download your clips.
 
+The **active for new clips** summary in Settings shows the transcript provider, model, and configuration source. A saved browser override takes precedence over the server default. Unsaved edits do not change the summary.
+
 The self-hosted Settings page only configures clipping. MCP is available through the [server setup below](#mcp-server-mcp). UGC and dubbing keys are configured in Cloud Settings; local dubbing still uses any ElevenLabs key already saved in the browser.
 
 For a hosted OpenAI-compatible provider, select **Custom (OpenAI-compatible)**, enter its public HTTPS base URL (for example `https://openrouter.ai/api/v1`, without `/chat/completions`), model ID, and API key if required, then select **Save provider**. Settings and the key are saved in this browser. Clip Generator sends the transcript to the selected provider, which may charge for requests.

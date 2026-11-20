@@ -288,7 +288,7 @@ const pollJob = async (jobId) => {
 
 function App() {
   // Cloud auth/billing session (inert when billing is disabled).
-  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, loading: authLoading } = useAuth();
+  const { billingEnabled, isManaged, isSignedIn, me, plan, refreshMe, jobRetentionSeconds, localLlm, geminiClip, loading: authLoading } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [showTopUp, setShowTopUp] = useState(false);
   // Free plan: "want the watermark off?" once per job, when the clips land.
@@ -1019,7 +1019,7 @@ function App() {
     }
   };
 
-  const clipProviderMissing = !billingEnabled && !(apiKey || localLlm || customLlm);
+  const clipProviderMissing = !billingEnabled && !(apiKey || geminiClip?.configured || localLlm || customLlm);
   const needsPlan = billingEnabled && !isManaged;   // hosted, signed-out or no active plan/trial
 
   // Fresh sign-up: Clip Generator tutorial (AuthContext set os_show_clip_tutorial
@@ -1848,7 +1848,7 @@ function App() {
                   <h1 className="font-display lowercase text-2xl text-ink">Settings</h1>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted mt-1">
-                  <Shield size={12} className="text-ok shrink-0" /> Privacy: keys only live in your browser (sent to backend just to process)
+                  <Shield size={12} className="text-ok shrink-0" /> Keys entered here are saved in this browser and sent to the backend when needed.
                 </div>
               </div>
               {isManaged ? (
@@ -1896,7 +1896,8 @@ function App() {
                 </div>
               ) : (
                 <>
-                  <ClipProviderSettings saved={customLlm} serverModel={localLlm?.model} onSave={saveClipProvider} />
+                  <ClipProviderSettings saved={customLlm} serverProvider={localLlm} gemini={geminiClip}
+                    hasGeminiKey={!!apiKey} loading={authLoading} onSave={saveClipProvider} />
                   <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
                 </>
               )}

@@ -56,6 +56,10 @@ def model_name() -> str:
     return (os.environ.get("LLM_MODEL") or "").strip() or DEFAULT_MODEL
 
 
+def gemini_model_name() -> str:
+    return os.environ.get("GEMINI_MODEL") or "gemini-3.1-flash-lite"
+
+
 def active() -> bool:
     """True when the moment picker should call the OpenAI-compatible server."""
     return provider() == "openai" and bool(base_url())

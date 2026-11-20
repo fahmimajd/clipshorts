@@ -224,6 +224,7 @@ export function AuthProvider({ children }) {
   const value = {
     billingEnabled: config.billingEnabled,
     localLlm: config.localLlm || null,
+    geminiClip: config.geminiClip || null,
     googleAuthEnabled: config.googleAuthEnabled,
     jobRetentionSeconds: config.jobRetentionSeconds || null,
     loading,
