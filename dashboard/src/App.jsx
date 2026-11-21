@@ -421,7 +421,7 @@ function App() {
   const [processingMedia, setProcessingMedia] = useState(null);
   const [requestedTab, setActiveTab] = useState('dashboard');
   // Keep the requested tab until config arrives, so Cloud deep links survive startup.
-  const activeTab = billingEnabled || requestedTab === 'settings' ? requestedTab : 'dashboard';
+  const activeTab = billingEnabled || ['history', 'settings'].includes(requestedTab) ? requestedTab : 'dashboard';
   // Mobile only: the full nav lives in a drawer behind the header's menu button.
   const [navOpen, setNavOpen] = useState(false);
   const navDrawerRef = useRef(null);
@@ -1459,8 +1459,8 @@ function App() {
       { id: 'ugc-gallery', ord: '05', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true },
       { id: 'thumbnails', ord: '06', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
       ...(isSignedIn ? [{ id: 'history', ord: '07', icon: History, label: 'History' }] : []),
-    ] : []),
-    { id: 'settings', ord: billingEnabled ? '08' : '02', icon: Settings, label: 'Settings', short: 'settings', primary: !billingEnabled },
+    ] : [{ id: 'history', ord: '02', icon: History, label: 'Gallery', short: 'gallery', primary: true }]),
+    { id: 'settings', ord: billingEnabled ? '08' : '03', icon: Settings, label: 'Settings', short: 'settings', primary: !billingEnabled },
   ];
   const activeNav = navItems.find((n) => n.id === activeTab);
 
@@ -1640,7 +1640,7 @@ function App() {
     </dialog>
   );
 
-  // Local installs fit both destinations in the bar. Cloud has a drawer for the rest.
+  // Local installs fit all destinations in the bar. Cloud has a drawer for the rest.
   // The bottom bar sits alongside the scrolling pane, so it cannot cover content.
   const renderMobileTabBar = () => {
     const tabs = navItems.filter((n) => n.primary);
@@ -2189,7 +2189,7 @@ function App() {
                     <button onClick={() => setShowLogin(true)} className="btn-primary">sign in</button>
                   </div>
                 ) : (
-                  <HistoryTab onReopenProject={restoreProject} />
+                  <HistoryTab key={billingEnabled ? 'cloud' : 'local'} local={!billingEnabled} onReopenProject={restoreProject} />
                 )}
               </div>
             </div>

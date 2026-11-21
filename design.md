@@ -31,7 +31,12 @@ atmospheric
 - Give the uploader a full-width drop target within its column. Keep advanced options collapsed and place the rights check next to the final action when space allows.
 - Use the existing dark surfaces to keep the work area distinct from the navigation. Use brass to identify the current selection, keyboard focus and the primary action.
 - Use the serif for the task heading, Geist for controls and mono for aspect ratios and section ordinals so values are easy to scan.
-- Keep Clip Generator and Settings as the only self-hosted destinations, including in the phone bar. Cloud keeps its full navigation. The tablet rail uses icons and the phone drawer shows full labels.
+- Keep Clip Generator, Gallery and Settings in the self-hosted rail and phone bar. Cloud keeps its full navigation. The tablet rail uses icons and the phone drawer shows full labels.
+
+### Render gallery
+
+- Group clips by render with the newest first so repeated runs are easy to distinguish. Reserve a portrait frame for each player and use one column on narrow phones so native playback controls have room.
+- Keep the Night Foundry canvas, serif heading, and mono dates from the generator. Use space to separate render groups; brass marks the selected tab and the download action.
 
 ## Theme tokens (Night Foundry)
 

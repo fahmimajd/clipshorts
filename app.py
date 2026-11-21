@@ -20,6 +20,8 @@ import asyncio
 import signal
 import socket
 from datetime import datetime, timezone, timedelta
+from stat import S_ISREG
+from urllib.parse import quote
 from dotenv import load_dotenv
 from typing import Any, Dict, Optional, List
 from contextlib import asynccontextmanager, suppress
@@ -1520,11 +1522,12 @@ def _canonical_clip_file(output_dir, base_name, index):
         # hook prefix, kept so old jobs still resolve).
         # wm_*{clean} is the free plan's marked copy of any of those (or of
         # the clean file itself: the * matches nothing), written last.
-        derived = (glob.glob(os.path.join(output_dir, f"subtitled_*_{clean}"))
-                   + glob.glob(os.path.join(output_dir, f"recut_*_{clean}"))
-                   + glob.glob(os.path.join(output_dir, f"hooked_*_{clean}"))
-                   + glob.glob(os.path.join(output_dir, f"hook_{clean}"))
-                   + glob.glob(os.path.join(output_dir, f"wm_*{clean}")))
+        suffix = glob.escape(clean)
+        derived = (glob.glob(os.path.join(output_dir, f"subtitled_*_{suffix}"))
+                   + glob.glob(os.path.join(output_dir, f"recut_*_{suffix}"))
+                   + glob.glob(os.path.join(output_dir, f"hooked_*_{suffix}"))
+                   + glob.glob(os.path.join(output_dir, f"hook_{suffix}"))
+                   + glob.glob(os.path.join(output_dir, f"wm_*{suffix}")))
     except Exception:
         derived = []
     if not derived:
@@ -6747,6 +6750,63 @@ async def _status_from_snapshot(request, snap, queue):
         "queue": queue if status == 'queued' else None,
         "partial": snap.get("partial"),
     }
+
+
+@app.get("/api/local-gallery")
+def local_gallery():
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    renders = []
+    with os.scandir(OUTPUT_DIR) as entries:
+        for job in entries:
+            if not _is_uuid_id(job.name) or not job.is_dir(follow_symlinks=False):
+                continue
+            if any(os.path.lexists(os.path.join(job.path, marker))
+                   for marker in (".owner", _RESUME_FILE, _EXPIRED_MARKER)):
+                continue
+            if _job_is_active(job.name):
+                continue
+
+            for meta in glob.iglob(os.path.join(job.path, "*_metadata.json")):
+                try:
+                    info = os.stat(meta, follow_symlinks=False)
+                    if not S_ISREG(info.st_mode):
+                        continue
+                    with open(meta, encoding="utf-8") as f:
+                        data = json.load(f)
+                except (OSError, ValueError):
+                    continue
+                shorts = data.get("shorts") if isinstance(data, dict) else None
+                if not isinstance(shorts, list):
+                    continue
+                base = os.path.basename(meta).removesuffix("_metadata.json")
+                created_at = datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat()
+                videos = []
+                for index, clip in enumerate(shorts):
+                    if not isinstance(clip, dict):
+                        continue
+                    try:
+                        filename = _canonical_clip_file(job.path, base, index)
+                        if "\\" in filename or not _media_guard(f"{job.name}/{filename}"):
+                            continue
+                        video = os.stat(os.path.join(job.path, filename), follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if not S_ISREG(video.st_mode) or video.st_size == 0:
+                        continue
+                    url = f"/videos/{job.name}/{quote(filename)}"
+                    title = clip.get("video_title_for_youtube_short")
+                    videos.append({
+                        "id": f"{job.name}/{filename}", "job_id": job.name,
+                        "job_title": base.replace("_", " "),
+                        "title": title if isinstance(title, str) and title.strip() else f"Clip {index + 1}",
+                        "created_at": created_at, "view_url": url, "download_url": url,
+                    })
+                if videos:
+                    renders.append((info.st_mtime, videos))
+    renders.sort(key=lambda render: render[0], reverse=True)
+    return {"videos": [video for _, videos in renders for video in videos]}
 
 
 @app.get("/api/status/{job_id}")
