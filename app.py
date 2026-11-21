@@ -6812,6 +6812,47 @@ def local_gallery():
     return {"videos": [video for _, videos in renders for video in videos]}
 
 
+@app.delete("/api/local-gallery/{job_id}")
+def delete_local_render(job_id: str, request: Request):
+    if BILLING_ENABLED or not _is_uuid_id(job_id):
+        raise HTTPException(status_code=404, detail="Render not found")
+
+    # The self-host API has wildcard CORS. A page on another origin must not
+    # be able to delete local renders even if it can read their IDs.
+    site = request.headers.get("sec-fetch-site")
+    origin = request.headers.get("origin")
+    if site not in (None, "same-origin") or (
+        site is None and origin is not None and origin != str(request.base_url).rstrip("/")
+    ):
+        raise HTTPException(status_code=403, detail="Open Gallery on the same origin to delete a render.")
+
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if (os.path.realpath(job_dir) != os.path.join(os.path.realpath(OUTPUT_DIR), job_id)
+            or not os.path.isdir(job_dir)
+            or (jobs.get(job_id) or {}).get("user_id") is not None
+            or os.path.lexists(os.path.join(job_dir, ".owner"))):
+        raise HTTPException(status_code=404, detail="Render not found")
+    if _job_is_active(job_id) or os.path.lexists(_manifest_path(job_id)):
+        raise HTTPException(status_code=409, detail="This render is still active. Wait for it to finish before deleting it.")
+    try:
+        with os.scandir(job_dir) as files:
+            if not any(entry.is_file(follow_symlinks=False) and entry.name.endswith("_metadata.json")
+                       for entry in files):
+                raise HTTPException(status_code=404, detail="Render not found")
+        # Uploaded sources are the only job files outside its render directory.
+        for upload in glob.iglob(os.path.join(UPLOAD_DIR, f"{job_id}_*")):
+            with suppress(FileNotFoundError):
+                os.unlink(upload)
+        shutil.rmtree(job_dir)
+    except FileNotFoundError:
+        if os.path.isdir(job_dir):
+            raise HTTPException(status_code=500, detail="Could not finish deleting the render. Try again.") from None
+    except OSError:
+        raise HTTPException(status_code=500, detail="Could not finish deleting the render. Close any open files and try again.") from None
+    jobs.pop(job_id, None)
+    return {"deleted": job_id}
+
+
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str, request: Request):
     front_view = request.scope.get(_STATUS_VIEW_KEY)

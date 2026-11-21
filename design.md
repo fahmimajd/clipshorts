@@ -37,6 +37,7 @@ atmospheric
 
 - Group clips by render with the newest first so repeated runs are easy to distinguish. Reserve a portrait frame for each player and use one column on narrow phones so native playback controls have room.
 - Keep the Night Foundry canvas, serif heading, and mono dates from the generator. Use space to separate render groups; brass marks the selected tab and the download action.
+- Put **Delete render** at the render header, not on individual clip cards. Keep it secondary to playback and make the confirmation name the source and all clips that will be deleted.
 
 ## Theme tokens (Night Foundry)
 

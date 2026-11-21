@@ -2189,7 +2189,12 @@ function App() {
                     <button onClick={() => setShowLogin(true)} className="btn-primary">sign in</button>
                   </div>
                 ) : (
-                  <HistoryTab key={billingEnabled ? 'cloud' : 'local'} local={!billingEnabled} onReopenProject={restoreProject} />
+                  <HistoryTab
+                    key={billingEnabled ? 'cloud' : 'local'}
+                    local={!billingEnabled}
+                    onReopenProject={restoreProject}
+                    onDeleteRender={(id) => { if (id === jobId) handleReset(); }}
+                  />
                 )}
               </div>
             </div>

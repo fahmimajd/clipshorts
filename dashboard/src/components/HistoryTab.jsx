@@ -1,15 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Loader2, Download, Film, FolderOpen } from 'lucide-react';
 import { apiJson } from '../lib/api';
 import { getApiUrl } from '../config';
 import { track } from '../lib/product-events';
 
-export default function HistoryTab({ local, onReopenProject }) {
+export default function HistoryTab({ local, onReopenProject, onDeleteRender }) {
   const [videos, setVideos] = useState(null);
   const [projects, setProjects] = useState({});
   const [reopening, setReopening] = useState(null);
   const [reopenError, setReopenError] = useState('');
   const [error, setError] = useState('');
+  const [deletion, setDeletion] = useState(null);
+  const heading = useRef(null);
 
   useEffect(() => {
     apiJson(local ? '/api/local-gallery' : '/api/history')
@@ -49,12 +51,27 @@ export default function HistoryTab({ local, onReopenProject }) {
     }
   };
 
+  const handleDelete = async (jobId, title) => {
+    if (deletion?.pending) return;
+    if (!window.confirm(`Delete "${title}"? This permanently removes all its clips and the local source video. Download any clips you want to keep first.`)) return;
+    setDeletion({ jobId, pending: true });
+    try {
+      await apiJson(`/api/local-gallery/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
+      setVideos((current) => current.filter((v) => v.job_id !== jobId));
+      setDeletion({ notice: 'Render deleted.' });
+      onDeleteRender?.(jobId);
+      heading.current?.focus();
+    } catch (e) {
+      setDeletion({ jobId, error: e?.detail || 'Could not delete the render. Try again.' });
+    }
+  };
+
   const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '');
 
   return (
     <div className={`max-w-5xl mx-auto ${local ? '' : 'p-4 sm:p-8'}`}>
       <p className="eyebrow mb-1.5">{local ? '02 · GALLERY' : '07 · HISTORY'}</p>
-      <h1 className="font-display lowercase text-2xl text-ink mb-2">{local ? 'Render gallery' : 'Your library'}</h1>
+      <h1 ref={heading} tabIndex={-1} className="font-display lowercase text-2xl text-ink mb-2">{local ? 'Render gallery' : 'Your library'}</h1>
       <p className="text-muted text-sm mb-8">
         {local
           ? 'Browse finished clips still on disk. Download any clips you want to keep before automatic cleanup.'
@@ -69,6 +86,7 @@ export default function HistoryTab({ local, onReopenProject }) {
 
       {error && <p role="alert" className="text-danger text-sm">{error}</p>}
       {reopenError && <p className="text-danger text-sm mb-4">{reopenError}</p>}
+      {deletion?.notice && <p role="status" className="text-muted text-sm mb-4">{deletion.notice}</p>}
 
       {videos && videos.length === 0 && (
         <div className="text-center py-20 text-muted">
@@ -102,7 +120,20 @@ export default function HistoryTab({ local, onReopenProject }) {
                       : <><FolderOpen size={14} /> reopen project</>}
                   </button>
                 )}
+                {local && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(jobId, title)}
+                    aria-disabled={!!deletion?.pending}
+                    className="btn-ghost min-h-11 px-3 py-2 text-xs shrink-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                  >
+                    {deletion?.pending && deletion.jobId === jobId ? 'Deleting…' : 'Delete render'}
+                  </button>
+                )}
               </div>
+              {deletion?.jobId === jobId && deletion.error && (
+                <p role="alert" className="text-danger text-sm mb-4">{deletion.error}</p>
+              )}
               <div className="grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
                 {vids.map((v) => (
                   <div key={v.id} className="card min-w-0 w-full max-w-xs overflow-hidden">
