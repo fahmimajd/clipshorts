@@ -8,7 +8,8 @@ services:
       - .:/app
       - /app/__pycache__
       - model_cache:/app/.cache
-      - ./output:/app/output
+      - "${OPENSHORTS_MEDIA_DIR:-.}/output:/app/output"
+      - "${OPENSHORTS_MEDIA_DIR:-.}/uploads:/app/uploads"
     restart: unless-stopped
 
   frontend:
@@ -33,7 +34,7 @@ services:
     ports:
       - "3100:3100"
     volumes:
-      - ./output:/output
+      - "${OPENSHORTS_MEDIA_DIR:-.}/output:/output"
     environment:
       - REMOTION_BUNDLE_PATH=/app/remotion
       - OUTPUT_DIR=/output

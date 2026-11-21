@@ -224,6 +224,10 @@ cp .env.example .env
 # Edit .env with your AWS keys for S3 backup
 ```
 
+To store renders and uploads outside the checkout, set `OPENSHORTS_MEDIA_DIR` in `.env` to the absolute path of a folder Docker can access. Use forward slashes on Windows. Create `output/` and `uploads/` inside that folder before starting Compose. The default is to keep both folders in the checkout.
+
+To migrate existing files, stop the backend and renderer with `docker compose stop backend renderer`, copy both folders to the new location, then run `docker compose up -d backend renderer`. Verify that the existing clips play in Gallery before removing the old copies. If a local Compose override sets these mounts, update it to point both services at the same output folder.
+
 ### 3. Launch
 ```bash
 docker compose up --build
