@@ -163,7 +163,10 @@ def test_preview_rejects_requests_when_both_slots_are_busy():
     assert error.value.status_code == 429
 
 
-@pytest.mark.parametrize("case", ["complete", "selected_range", "slow_complete", "deadline", "event_limit"])
+@pytest.mark.parametrize("case", [
+    "complete", "selected_range", "slow_complete", "deadline", "event_limit",
+    "long_complete", "long_early_range", "long_request_limit",
+])
 def test_fetch_chat_uses_only_verified_replay_protocol(monkeypatch, case):
     yt_dlp = pytest.importorskip("yt_dlp")
     from yt_dlp.extractor.youtube import YoutubeBaseInfoExtractor
@@ -173,6 +176,7 @@ def test_fetch_chat_uses_only_verified_replay_protocol(monkeypatch, case):
     monkeypatch.setattr(youtube_live, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     if case == "event_limit":
         monkeypatch.setattr(youtube_live, "_CHAT_MAX_EVENTS", 1)
+    long_replay = case.startswith("long_")
     watch = {"contents": {"twoColumnWatchNextResults": {"conversationBar": {
         "liveChatRenderer": {"continuations": [{"reloadContinuationData": {"continuation": "first"}}]},
     }}}}
@@ -186,13 +190,20 @@ def test_fetch_chat_uses_only_verified_replay_protocol(monkeypatch, case):
 
     def mock_info(_self, _url, *, download, process, ie_key):
         assert not download and not process and ie_key == "Youtube"
-        return {"id": VIDEO_ID, "duration": 90, "live_status": "was_live",
+        duration = 86_400 if case == "long_request_limit" else 13_944 if long_replay else 90
+        return {"id": VIDEO_ID, "duration": duration, "live_status": "was_live",
                 "subtitles": {"live_chat": [{**REPLAY, "protocol": "youtube_live_chat"}, REPLAY]}}
 
     def mock_request(self, request):
         assert youtube_live.ssrf_guard.active()
         assert self.params["proxy"] == "" and not self.params.get("cookiefile")
         calls.append(request.url)
+        if long_replay and len(calls) > 1:
+            number = len(calls) - 1
+            seconds = number // 2 if case == "long_early_range" else number * 3
+            end_page = 16_010 if case == "long_request_limit" else 4_050
+            response = page("viewer", seconds, "next" if number < end_page else None)
+            return io.BytesIO(json.dumps(response).encode())
         responses = [watch, page("viewer-1", 1, "next"), page("viewer-2", 40, "unused-next"),
                      page("viewer-3", 42)]
         return io.BytesIO(json.dumps(responses[len(calls) - 1]).encode())
@@ -203,6 +214,8 @@ def test_fetch_chat_uses_only_verified_replay_protocol(monkeypatch, case):
                 clock[0] = 1800
             elif case == "slow_complete":
                 clock[0] = 121
+        if case == "long_complete" and len(calls) == 4000:
+            clock[0] = 1801
         return json.loads(body)
 
     monkeypatch.setattr(yt_dlp.YoutubeDL, "extract_info", mock_info)
@@ -212,7 +225,7 @@ def test_fetch_chat_uses_only_verified_replay_protocol(monkeypatch, case):
     continuation_url = "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=unused"
     assert_calls = [REPLAY["url"], "https://www.youtube.com/live_chat_replay?continuation=first"]
     if case == "deadline":
-        with pytest.raises(YouTubeLiveError, match="No clips were selected") as error:
+        with pytest.raises(YouTubeLiveError, match=r"\(time\).*No clips were selected") as error:
             youtube_live.fetch_chat(VIDEO_ID)
         assert error.value.status_code == 503
     elif case == "selected_range":
@@ -223,6 +236,18 @@ def test_fetch_chat_uses_only_verified_replay_protocol(monkeypatch, case):
             youtube_live.fetch_chat(VIDEO_ID)
         assert error.value.status_code == 422
         assert_calls.append(continuation_url)
+    elif case == "long_complete":
+        events = youtube_live.fetch_chat(VIDEO_ID, source_start=12_000)
+        assert events[0] == (12_000, "viewer")
+        assert events[-1] == (12_150, "viewer")
+        assert len(events) == 51
+        return
+    elif long_replay:
+        source_end = 3600 if case == "long_early_range" else float("inf")
+        with pytest.raises(YouTubeLiveError, match=r"\(request count\).*No clips were selected"):
+            youtube_live.fetch_chat(VIDEO_ID, source_end=source_end)
+        assert len(calls) == (4_000 if case == "long_early_range" else 16_000)
+        return
     else:
         assert youtube_live.fetch_chat(VIDEO_ID, source_start=30) == [(40.0, "viewer-2"), (42.0, "viewer-3")]
         assert_calls.extend([continuation_url, continuation_url])

@@ -102,8 +102,12 @@ live chat. Preview reads one YouTube storyboard tile. The job fetches the chat
 replay via yt-dlp, anonymous direct then static, never over the paid proxy.
 All requests and bytes are bounded. Chat text and author IDs are not stored.
 A selected source range stops the sequential chat download at its end. The
-download is bounded to 30 minutes, 4,000 requests, 512 MiB, and 250,000 chat
-events. If a limit is hit, the job fails rather than ranking a partial replay.
+budget scales by each started hour from the beginning of the replay to that
+end (or to the end of the stream for a full replay): 30 minutes, 4,000
+requests, and 512 MiB per hour of replay, up to 2 hours of download time,
+16,000 requests, and 2 GiB total. The 4 MiB per-response and 250,000-event
+limits do not scale. If a limit is hit, the job reports which one and fails
+rather than ranking a partial replay.
 
 Once chat is downloaded, rank 10-second windows spaced 5 seconds apart by
 distinct chatters. Short clips use a shorter scoring window so the counted

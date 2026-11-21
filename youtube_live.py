@@ -53,17 +53,19 @@ def _routes():
             yield proxy
 
 
-def _on_routes(video_id, operation, *, timeout, max_bytes, max_requests):
+def _on_routes(video_id, operation, *, timeout, max_bytes, max_requests, chat_end=None):
     url = _watch_url(video_id)
     from yt_dlp import YoutubeDL
     from yt_dlp.networking import Request
 
-    deadline = time.monotonic() + timeout
-    requests = 0
+    started = time.monotonic()
+    deadline = started + timeout
+    scale = 1
+    requests = total_received = 0
 
-    def budget_error():
+    def budget_error(limit):
         return YouTubeLiveError(
-            503, "YouTube chat replay reached the download limit. No clips were selected. "
+            503, f"YouTube chat replay reached the download limit ({limit}). No clips were selected. "
                  "Try again or choose a shorter replay or an earlier range.")
 
     class BoundedYDL(YoutubeDL):
@@ -73,10 +75,14 @@ def _on_routes(video_id, operation, *, timeout, max_bytes, max_requests):
             return super().build_request_director(handlers, preferences)
 
         def urlopen(self, request):
-            nonlocal requests, max_bytes
+            nonlocal requests
             remaining = deadline - time.monotonic()
-            if remaining <= 0 or max_bytes <= 0 or requests >= max_requests:
-                raise budget_error()
+            if remaining <= 0:
+                raise budget_error("time")
+            if requests >= max_requests * scale:
+                raise budget_error("request count")
+            if total_received >= max_bytes * scale:
+                raise budget_error("total download size")
             requests += 1
             if isinstance(request, str):
                 request = Request(request)
@@ -88,24 +94,26 @@ def _on_routes(video_id, operation, *, timeout, max_bytes, max_requests):
             received = 0
 
             def bounded_read(size=None):
-                nonlocal received, max_bytes
+                nonlocal received, total_received
                 data = bytearray()
                 while size is None or size < 0 or len(data) < size:
                     if time.monotonic() >= deadline:
                         response.close()
-                        raise budget_error()
-                    remaining = min(4 * _MIB - received, max_bytes)
+                        raise budget_error("time")
+                    response_left = 4 * _MIB - received
+                    remaining = min(response_left, max_bytes * scale - total_received)
                     amount = min(64 * 1024, remaining + 1)
                     if size is not None and size >= 0:
                         amount = min(amount, size - len(data))
                     chunk = read(amount)
                     if len(chunk) > remaining:
                         response.close()
-                        raise budget_error()
+                        limit = "response size" if len(chunk) > response_left else "total download size"
+                        raise budget_error(limit)
                     if not chunk:
                         break
                     received += len(chunk)
-                    max_bytes -= len(chunk)
+                    total_received += len(chunk)
                     data.extend(chunk)
                 return bytes(data)
 
@@ -127,6 +135,10 @@ def _on_routes(video_id, operation, *, timeout, max_bytes, max_requests):
             with ssrf_guard.guarded(), BoundedYDL({**opts, "proxy": proxy}) as ydl:
                 info = ydl.extract_info(url, download=False, process=False, ie_key="Youtube")
                 duration, replay = _completed_replay(info, video_id)
+                if chat_end is not None:
+                    # Replay pages are read from the beginning even for a late source cut.
+                    scale = max(1, min(4, math.ceil(min(duration, chat_end) / 3600)))
+                    deadline = started + timeout * scale
                 return operation(ydl, info, duration, replay)
         except YouTubeLiveError:
             raise
@@ -311,7 +323,9 @@ def fetch_chat(video_id: str, *, source_start: float = 0,
             pass
         return events
 
-    return _on_routes(video_id, read_chat, timeout=1800, max_bytes=512 * _MIB, max_requests=4000)
+    return _on_routes(
+        video_id, read_chat, timeout=1800, max_bytes=512 * _MIB, max_requests=4000, chat_end=source_end,
+    )
 
 
 def clip_candidates(events, *, source_start, duration, clip_seconds, limit):
