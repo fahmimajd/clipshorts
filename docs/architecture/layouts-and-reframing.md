@@ -169,8 +169,10 @@ width, so an explicit GENERAL override on a portrait clip cannot shrink it.
 - **YouTube Live** (`reframe_v2.render_stream`): a manual webcam rectangle in
   source fractions replaces scene and face detection. The largest rectangular
   gameplay crop outside that box goes on top, the webcam below. Both are
-  fitted without stretching, with a `SPLIT` sidecar for seam captions. A recut
-  from the source uses the saved box unless the editor overrides the framing.
+  fitted without stretching and touch at the midpoint; any vertical padding
+  goes above gameplay or below the webcam. The `SPLIT` sidecar keeps captions
+  on the seam. A recut from the source uses the saved box unless the editor
+  overrides the framing.
 - **ALTERNATE** (`active_speaker.py`, `SPEAKER_SIGNAL=1` + `SPEAKER_CUT=1`):
   hard cuts to whoever is talking, rendered through the TRACK path as a
   trajectory with jumps. `SPEAKER_SIGNAL=1` alone just gates SPLIT on both people

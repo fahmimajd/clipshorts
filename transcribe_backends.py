@@ -70,15 +70,14 @@ ASR_WAIT = {"s": 0.0}
 # eight jobs, one of them a 3 MB clip, slept waiting for one. 0 turns it off.
 ASR_LONG_SECONDS = float(os.environ.get("ASR_LONG_SECONDS", "1800") or 0)
 
-# The host slot this process holds right now, so a transcription that stops
-# using the GPU (whisper fell back to the CPU) can hand it back early.
-_HELD_HOST_SLOT = None
+# CPU fallback releases only the slot held by this transcription thread.
+_host_slot_state = threading.local()
 
 
 def release_host_slot():
     """Hand back the host slot this process holds, if any, before the
     ``with`` block ends: for work that no longer runs on the card."""
-    slot = _HELD_HOST_SLOT
+    slot = getattr(_host_slot_state, "slot", None)
     if slot is not None:
         slot.release()
 
@@ -115,7 +114,6 @@ class host_asr_slot:
         return self.slots
 
     def __enter__(self):
-        global _HELD_HOST_SLOT
         if self.slots <= 0:
             return self
         try:
@@ -135,7 +133,7 @@ class host_asr_slot:
                 try:
                     fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     self._fh = fh
-                    _HELD_HOST_SLOT = self
+                    _host_slot_state.slot = self
                     ASR_WAIT["s"] += time.monotonic() - started
                     return self
                 except OSError:
@@ -150,7 +148,6 @@ class host_asr_slot:
 
     def release(self):
         """Give the slot back (idempotent; ``__exit__`` calls it too)."""
-        global _HELD_HOST_SLOT
         if self._fh is not None:
             try:
                 import fcntl
@@ -159,8 +156,8 @@ class host_asr_slot:
                 pass
             self._fh.close()
             self._fh = None
-        if _HELD_HOST_SLOT is self:
-            _HELD_HOST_SLOT = None
+        if getattr(_host_slot_state, "slot", None) is self:
+            del _host_slot_state.slot
 
     def __exit__(self, *exc):
         self.release()

@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -571,18 +572,24 @@ class TestLongMediaAndEarlyRelease:
 
     def test_release_host_slot_frees_it_before_the_block_ends(self, tmp_path):
         with tb.host_asr_slot(slots=1, lock_dir=str(tmp_path), poll=0.01) as held:
-            assert tb._HELD_HOST_SLOT is held
             tb.release_host_slot()
-            assert held._fh is None and tb._HELD_HOST_SLOT is None
+            assert held._fh is None
             with tb.host_asr_slot(slots=1, lock_dir=str(tmp_path), poll=0.01,
                                   timeout=0.05) as other:
                 assert other._fh is not None
         tb.release_host_slot()  # nothing held: a no-op
 
+    def test_cpu_fallback_does_not_free_another_threads_gpu_slot(self, tmp_path):
+        with tb.host_asr_slot(slots=1, lock_dir=str(tmp_path)):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(tb.release_host_slot).result()
+            with pytest.raises(TimeoutError):
+                with tb.host_asr_slot(slots=1, lock_dir=str(tmp_path), timeout=0):
+                    pytest.fail("another thread released the slot")
+
     def test_whisper_on_the_cpu_hands_the_slot_back(self, tmp_path, monkeypatch):
         class _Model:
             def transcribe(self, path, **params):
-                assert tb._HELD_HOST_SLOT is None  # released before decoding
                 return iter([]), SimpleNamespace(duration=0, language="hi")
 
         monkeypatch.setattr(tb, "_whisper_force_cpu", True)

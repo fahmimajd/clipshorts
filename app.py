@@ -5245,7 +5245,7 @@ def _remote_eligible(job_id, priority) -> bool:
     return os.path.exists(_manifest_path(job_id))
 
 
-def _claim_remote_job(worker):
+def _claim_remote_job(worker, youtube_captions=False):
     """Hand the next eligible queued job to the remote worker, or None.
     ``(job_id, claim)``. Loop thread only: it edits the heap.
 
@@ -5284,6 +5284,7 @@ def _claim_remote_job(worker):
         _running_jobs.add(job_id)
         _remote_jobs.add(job_id)
         job['run_started'] = time.time()
+        job['_remote_youtube_captions'] = youtube_captions
         _touch_manifest(job_id, started=True)
         claim = remote_worker.begin(job['output_dir'], worker)
         print(f"🛰️ Job {job_id} goes to the remote worker {str(worker)[:40]!r}.")
@@ -5308,6 +5309,7 @@ async def _run_job_remote(job_id, job_data):
     try:
         parsed = remote_worker.worker_args(cmd)
         env = dict(job_data['env'])
+        env["PREPARE_YOUTUBE_CAPTIONS"] = "1" if job_data.get('_remote_youtube_captions') else "0"
         if await _paid_proxy_budget_exceeded():
             env.pop("PROXY_URL", None)
         jobs[job_id].pop('remote_source', None)
@@ -5476,7 +5478,8 @@ async def _worker_body(request: Request) -> dict:
 async def worker_claim(request: Request):
     _worker_auth(request)
     body = await _worker_body(request)
-    claimed = _claim_remote_job(str(body.get("worker") or "worker"))
+    claimed = _claim_remote_job(str(body.get("worker") or "worker"),
+                                youtube_captions=body.get("youtube_captions") is True)
     if claimed is None:
         return JSONResponse({"job_id": None})
     return {"job_id": claimed[0], "claim": claimed[1]}
@@ -7819,9 +7822,14 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
             and os.path.exists(canonical_path)
             and recut.within_range(segments, canonical_range['start'],
                                    canonical_range['end']))
-    if not fast and not source_path and archived is not None:
+    if "whisper_coverage" in transcript:
+        from transcribe_backends import missing_whisper_ranges, transcribe_whisper_ranges
+        ranges = missing_whisper_ranges(transcript, [(s['start'], s['end']) for s in segments])
+    else:
+        ranges = []
+    if (not fast or ranges) and not source_path and archived is not None:
         source_path = await _locate_or_fetch_source(req.job_id)
-    if not fast and not source_path:
+    if (not fast or ranges) and not source_path:
         raise HTTPException(
             status_code=409,
             detail=("The source video is no longer on the server; changing the "
@@ -7833,9 +7841,6 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
     rerender_minutes = _cloud_config.EDITOR_ACTION_MINUTES if BILLING_ENABLED else 0
     reservation_id = await reserve_managed_action(
         request, rerender_minutes, req.job_id, "rerender")
-
-    v_transcript = (recut.virtual_transcript(transcript, segments)
-                    if req.reapply_captions else None)
 
     def run_recut():
         if fast:
@@ -7858,6 +7863,12 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
             webcam_box=data.get('youtube_live_webcam'))
 
     try:
+        if ranges:
+            transcript = await asyncio.to_thread(
+                transcribe_whisper_ranges, source_path, ranges, transcript)
+            data['transcript'] = transcript
+        v_transcript = (recut.virtual_transcript(transcript, segments)
+                        if req.reapply_captions else None)
         loop = asyncio.get_event_loop()
         served_name, _clean_recut_name = await loop.run_in_executor(None, run_recut)
         served_name = await _deliver(request, req.job_id, served_name)
@@ -7910,6 +7921,7 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
             "duration": total,
             "render_path": "fast" if fast else "source",
             "mode": "normal",
+            **({"words": recut.transcript_words(transcript)} if ranges else {}),
         }
     except Exception as e:
         if reservation_id:

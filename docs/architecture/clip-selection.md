@@ -27,6 +27,25 @@ Two invariants keep that chain from leaking:
 `target_clips` on `/api/process` (dashboard: advanced options) pins both ends via
 `CLIP_TARGET_MIN` / `CLIP_TARGET_MAX` when the user wants an exact number.
 
+## YouTube captions for selection, Whisper for subtitles
+
+For a whole YouTube source without a cached or supplied full transcript, the
+job fetches original-language captions alongside the video download. The
+existing two-pass picker scores the caption text and gets cue timestamps in its
+detail pass. Whisper transcribes only the winning ranges, with three seconds of
+audio on each side and overlapping ranges merged. The picker refines the cuts
+against those words before rendering. Only Whisper words feed subtitles.
+
+Missing, sparse, or poorly aligned captions fall back to full-source ASR, as do
+caption-driven picks that cannot be confirmed against the audio. Uploads and
+jobs capped to part of the source still use the existing ASR path. Compatible
+remote workers get caption-only checkpoints; those aren't full ASR cache entries.
+
+The clip editor stores which source intervals Whisper covered, including silence.
+On save, it transcribes any newly selected intervals from the retained source
+and keeps their words for subsequent edits. The initial video download and render
+still run; the optimization reduces the audio Whisper has to process.
+
 ## Silent footage: the vision fallback (`main.get_visual_clips`)
 
 `transcribe_video` raising `NoAudioError`, **or** `speech_is_sparse()` returning
@@ -82,9 +101,19 @@ The YouTube Live input only accepts completed landscape replays with public
 live chat. Preview reads one YouTube storyboard tile. The job fetches the chat
 replay via yt-dlp, anonymous direct then static, never over the paid proxy.
 All requests and bytes are bounded. Chat text and author IDs are not stored.
+A selected source range stops the sequential chat download at its end. The
+download is bounded to 30 minutes, 4,000 requests, 512 MiB, and 250,000 chat
+events. If a limit is hit, the job fails rather than ranking a partial replay.
 
-Rank sliding windows by distinct chatters, then take non-overlapping clips
-with up to five seconds of lead-in to account for reaction delay. Chat times
-are absolute in the VOD; clip times are rebased to any source cut. No usable
-chat is an explicit failure, not an automatic switch to transcript selection.
-Whisper only transcribes the selected ranges when captions are enabled.
+Once chat is downloaded, rank 10-second windows spaced 5 seconds apart by
+distinct chatters. Short clips use a shorter scoring window so the counted
+reactions fit. Take the highest-ranked non-overlapping clips, starting up to
+10 seconds before the first chat message in the window to account for
+reaction delay. The lead-in is capped at half the clip length. Chat times are
+absolute in the VOD; clip times are rebased to any source cut. Without usable
+chat, the job fails rather than switching to transcript selection.
+Whisper transcribes only the selected ranges for captions or hook grounding.
+Chat chooses the moment; it does not write the title or hook. For those,
+Gemini uses the rendered frames and speech when configured, or the server's
+OpenAI-compatible provider uses the clip's speech alone. Without usable
+context or a provider, the clip keeps its numbered title and no automatic hook.

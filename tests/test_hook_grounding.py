@@ -136,6 +136,39 @@ def test_empty_answer_keeps_the_old_hook(monkeypatch):
     assert clip["viral_hook_text"] == "old"
 
 
+def test_gameplay_uses_only_selected_speech_with_text_provider(monkeypatch):
+    import llm_backend
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_BASE_URL", "http://text-provider.example/v1")
+    response = {"on_screen": "", "viral_hook_text": "Menang dengan satu HP",
+                "video_title_for_youtube_short": "Bertahan dengan satu HP sampai menang"}
+
+    def ask(prompt, schema):
+        assert "bertahan dengan satu HP" in prompt
+        assert "mulai stream" not in prompt
+        return schema.model_validate(response).model_dump(), None
+
+    monkeypatch.setattr(llm_backend, "generate_json", ask)
+    transcript = {"language": "id", "segments": [
+        {"start": 0, "end": 4, "text": "mulai stream"},
+        {"start": 55, "end": 58, "text": "bertahan dengan satu HP"},
+    ]}
+    clip = {"video_title_for_youtube_short": "Chat highlight 1"}
+    assert hg.reground("unused.mp4", clip, transcript, 50, 65, gameplay=True)["frames"] == 0
+    assert clip["viral_hook_text"] == response["viral_hook_text"]
+    assert clip["video_title_for_youtube_short"] == response["video_title_for_youtube_short"]
+
+
+def test_gameplay_uses_frames_even_when_clip_has_no_speech(gemini):
+    clip = {"layout_ranges": [{"start": 0, "end": 20, "layout": "split"}]}
+    result = hg.reground("clip.mp4", clip, None, 100, 120, gameplay=True)
+    assert result["frames"] == 3
+    assert "(no speech)" in gemini["prompt"]
+    assert "upper panel is gameplay" in gemini["prompt"]
+    assert clip["viral_hook_text"]
+
 # --- the cheap half: the detail prompt itself -------------------------------
 
 def test_detail_prompt_forbids_topic_summary_hooks():

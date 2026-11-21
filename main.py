@@ -9,7 +9,7 @@ import contextlib
 import threading
 import unicodedata
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 from ultralytics import YOLO
@@ -2054,10 +2054,11 @@ def load_transcript_checkpoint(output_dir, input_video, duration):
         return None
 
 
-def prepare_transcript(input_video, output_dir, url, mode):
+def prepare_transcript(input_video, output_dir, url, mode, caption_lookup=None):
     """``--prepare-only``: leave this source's transcript as the job's
     checkpoint, so the run that renders it (a remote worker with no GPU, or
     the retry on this host) reuses it instead of transcribing.
+    A compatible worker can instead pick moments from a caption-only checkpoint.
 
     ``mode`` "cache": only what the download cache already holds for this very
     source. "1": otherwise transcribe here, on this host's card, inside the
@@ -2072,13 +2073,24 @@ def prepare_transcript(input_video, output_dir, url, mode):
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
         duration = frame_count / fps
-        if load_transcript_checkpoint(output_dir, input_video, duration) is not None:
-            return True
+        checkpoint = load_transcript_checkpoint(output_dir, input_video, duration)
+        if checkpoint is not None:
+            if checkpoint.get("source") != "youtube_captions" or caption_lookup is not None:
+                return True
+            # An older remote renderer cannot use a caption-only checkpoint.
+            clear_transcript_checkpoint(output_dir)
+        if not mode and caption_lookup is None:
+            return False
         transcript, from_cache = None, False
         if url:
             import source_cache
             transcript = source_cache.fetch_transcript(url, duration)
             from_cache = transcript is not None
+        if transcript is None:
+            captions = _wait_youtube_captions(caption_lookup, duration)
+            if captions is not None:
+                save_transcript_checkpoint(output_dir, captions, input_video, duration)
+                return True
         if transcript is None and mode == "1":
             from transcribe_backends import NoAudioError
             try:
@@ -2328,10 +2340,11 @@ def get_viral_clips(transcript_result, video_duration, viewer_clips=None):
         if heat:
             print(f"   👀 Viewer clips fall in {len(heat)} window(s).")
 
-        def _payload(ws):
+        def _payload(ws, *, timed=False):
             out = []
             for w in ws:
-                item = {"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]}
+                text = w["timed_text"] if timed and "timed_text" in w else w["text"]
+                item = {"id": w["id"], "start": w["start"], "end": w["end"], "text": text}
                 h = heat.get(w["id"])
                 if h:
                     item["viewers_clipped"] = h["clips"]
@@ -2389,7 +2402,7 @@ def get_viral_clips(transcript_result, video_duration, viewer_clips=None):
                     video_duration=video_duration, language=language,
                     min_clips=lo, max_clips=hi,
                     min_secs=min_secs, max_secs=max_secs,
-                    windows_json=json.dumps(_payload(ws), ensure_ascii=False))
+                    windows_json=json.dumps(_payload(ws, timed=True), ensure_ascii=False))
             return build
 
         shorts = _run_stage_split(client, model_name, shortlist,
@@ -2488,13 +2501,112 @@ def speech_is_sparse(transcript, duration):
     return words < MIN_SPEECH_WORDS or words / minutes < MIN_SPEECH_WORDS_PER_MIN
 
 
-def _select_youtube_live_clips(input_video, duration, chat_events, video_title):
+def _start_youtube_captions(url):
+    from free_tools import extract_video_id, fetch_transcript
+    from ssrf_guard import guarded
+
+    video_id = extract_video_id(url)
+    if not video_id:
+        return None
+    result = Future()
+    # This lookup runs alongside the video download. A slow caption endpoint
+    # must not hold the job up once the video is ready.
+    deadline = time.monotonic() + 10
+
+    def fetch():
+        try:
+            with guarded():
+                result.set_result(fetch_transcript(video_id, original_only=True))
+        except Exception:
+            result.set_result(None)
+
+    threading.Thread(target=fetch, daemon=True).start()
+    return result, deadline
+
+
+def _wait_youtube_captions(lookup, duration):
+    if lookup is None:
+        return None
+    result, deadline = lookup
+    try:
+        captions = result.result(timeout=max(0, deadline - time.monotonic()))
+        if not captions or not duration or not math.isfinite(duration):
+            return None
+        caption_duration = float(captions["duration"])
+        if not math.isfinite(caption_duration) or abs(caption_duration - duration) > 2:
+            return None
+        segments = []
+        for cue in captions["segments"]:
+            start = max(0.0, float(cue["start"]))
+            end = min(duration, start + float(cue["dur"]))
+            text = cue["text"].strip()
+            if end > start and text:
+                segments.append({"start": start, "end": end, "text": text})
+        segments.sort(key=lambda seg: seg["start"])
+        transcript = {"source": "youtube_captions", "language": captions["language"],
+                      "segments": segments}
+        if (not segments or speech_is_sparse(transcript, duration)
+                or max(seg["end"] for seg in segments) - segments[0]["start"] < duration * 0.7):
+            return None
+        return transcript
+    except (TimeoutError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _select_youtube_clips(input_video, duration, captions):
+    from recut import transcript_words
+    from transcribe_backends import transcribe_whisper_ranges
+
+    print("Using YouTube captions to find moments.", flush=True)
+    clips = get_viral_clips(captions, duration)
+    if not clips:
+        return None, None
+    lo, hi = clip_duration_bounds()
+    shorts = [s for s in clips["shorts"]
+              if 0 <= s["start"] < s["end"] <= duration and lo <= round(s["end"] - s["start"], 3) <= hi]
+    if not shorts:
+        return None, None
+    ranges = [(max(0, s["start"] - 3), min(duration, s["end"] + 3)) for s in shorts]
+    try:
+        transcript = transcribe_whisper_ranges(input_video, ranges)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as e:
+        print(f"Selected audio transcription failed ({type(e).__name__}); transcribing the source.")
+        return None, None
+    words = transcript_words(transcript)
+    for s, (left, right) in zip(shorts, ranges):
+        local_words = [w for w in words if left <= w["s"] and w["e"] <= right]
+        start, end = snap_clip_to_words(s["start"], s["end"], local_words, right,
+                                       min_duration=lo, max_duration=hi)
+        if not any(w["e"] > start and w["s"] < end for w in local_words):
+            return None, None
+        if left <= start < end <= right and lo <= round(end - start, 3) <= hi:
+            s["start"], s["end"] = start, end
+    clips["shorts"] = dedupe_overlapping(shorts)
+    return clips, transcript
+
+
+def _select_or_transcribe(input_video, duration, output_dir, transcript, captions):
+    if captions is not None:
+        clips, selected_words = _select_youtube_clips(input_video, duration, captions)
+        if clips is not None:
+            return clips, selected_words
+        print("YouTube captions did not yield usable clips; transcribing the source.")
+    if transcript is None:
+        from transcribe_backends import NoAudioError
+        try:
+            transcript = transcribe_video(input_video)
+            save_transcript_checkpoint(output_dir, transcript, input_video, duration)
+        except NoAudioError as e:
+            print(f"🔇 {e} — switching to visual analysis.")
+    return None, transcript
+
+
+def _select_youtube_live_clips(input_video, duration, chat_events, video_title, source_start):
     from youtube_live import clip_candidates
 
-    source_start = (float(os.environ.get("SOURCE_START_SECONDS", "0") or 0)
-                    if os.environ.get("MAX_SOURCE_MINUTES", "").strip() else 0)
     low, high = clip_duration_bounds()
     _, limit = clip_count_targets(shortlist_target(duration))
+    print("Finding the best moments in 10-second chat windows…", flush=True)
     peaks = clip_candidates(chat_events, source_start=source_start, duration=duration,
                             clip_seconds=max(low, min(30, high)), limit=limit)
     if not peaks:
@@ -2507,11 +2619,11 @@ def _select_youtube_live_clips(input_video, duration, chat_events, video_title):
         reason = f"{viewers} unique {'chatter' if viewers == 1 else 'chatters'} in this burst."
         clips.append({"start": peak["start"], "end": peak["end"], "why": reason,
                       "video_title_for_youtube_short": title,
-                      "viral_hook_text": f"Chat highlight {i}",
                       "video_description_for_tiktok": title,
                       "video_description_for_instagram": title})
     transcript = None
-    if os.environ.get("AUTO_CAPTIONS", "1").strip() != "0":
+    if (os.environ.get("AUTO_CAPTIONS", "1").strip() != "0"
+            or hook_grounding.enabled() and (os.getenv("GEMINI_API_KEY") or llm_backend.active())):
         from transcribe_backends import transcribe_whisper_ranges
 
         try:
@@ -2841,12 +2953,20 @@ if __name__ == '__main__':
     if webcam_box is not None:
         from youtube_live import YouTubeLiveError, fetch_chat
 
+        source_end = math.inf
+        live_source_start = 0.0
+        if minutes := os.environ.get("MAX_SOURCE_MINUTES", "").strip():
+            live_source_start = float(os.environ.get("SOURCE_START_SECONDS", "0") or 0)
+            source_end = live_source_start + float(minutes) * 60
+
         print("Reading YouTube live chat replay…", flush=True)
         try:
-            chat_events = fetch_chat(live_video_id)
+            chat_events = fetch_chat(live_video_id, source_start=live_source_start, source_end=source_end)
         except YouTubeLiveError as error:
             sys.exit(f"❌ YouTube Live: {error}")
+        print("YouTube live chat replay downloaded.", flush=True)
 
+    caption_lookup = None
     # 1. Get Input Video
     if args.url:
         # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
@@ -2897,8 +3017,14 @@ if __name__ == '__main__':
             threading.Thread(target=_early_work, args=(audio_path, audio_duration),
                              daemon=True).start()
 
-        use_early = (not args.skip_analysis and not args.transcript
+        if (webcam_box is None and not args.skip_analysis and not args.transcript
+                and not os.environ.get("MAX_SOURCE_MINUTES", "").strip()
+                and (not args.prepare_only or os.environ.get("PREPARE_YOUTUBE_CAPTIONS") == "1")):
+            caption_lookup = _start_youtube_captions(args.url)
+
+        use_early = (webcam_box is None and not args.skip_analysis and not args.transcript
                      and not args.prepare_only
+                     and caption_lookup is None
                      and os.environ.get("EARLY_AUDIO", "1").strip() != "0"
                      and not os.environ.get("MAX_SOURCE_MINUTES", "").strip()
                      and not os.path.exists(os.path.join(output_dir, TRANSCRIPT_CHECKPOINT)))
@@ -2942,8 +3068,10 @@ if __name__ == '__main__':
         input_video = cap_source_duration(input_video, os.environ["SOURCE_CAP_MINUTES"],
                                           safety=True)
         # The cut rewrites the file in place: a new size/mtime means it happened.
-        if _stamp(input_video) != _before and globals().get("early") is not None:
-            early["invalid"] = True  # its words cover the part that was cut off
+        if _stamp(input_video) != _before:
+            caption_lookup = None
+            if globals().get("early") is not None:
+                early["invalid"] = True  # its words cover the part that was cut off
 
     if args.prepare_only:
         # The source is on disk as every later stage must see it (downloaded,
@@ -2951,8 +3079,8 @@ if __name__ == '__main__':
         # (remote_worker.py); the marker is consumed by app.py.
         print(f"SOURCE_READY {input_video}", flush=True)
         _mode = os.environ.get("PREPARE_TRANSCRIPT", "").strip().lower()
-        if _mode in ("1", "cache") and not args.skip_analysis and not args.transcript:
-            prepare_transcript(input_video, output_dir, args.url, _mode)
+        if not args.skip_analysis and not args.transcript:
+            prepare_transcript(input_video, output_dir, args.url, _mode, caption_lookup)
         sys.exit(0)
 
     # Layout choice is per SOURCE video, not per clip: one upload and one call
@@ -3016,11 +3144,10 @@ if __name__ == '__main__':
         cap.release()
 
         if webcam_box is not None:
-            clips_data, transcript = _select_youtube_live_clips(input_video, duration, chat_events, video_title)
+            clips_data, transcript = _select_youtube_live_clips(
+                input_video, duration, chat_events, video_title, live_source_start)
         else:
-            # 3. Transcribe — unless the video has no audio, in which case fall back
-            # to Gemini vision (picks clips from the imagery instead of the speech).
-            from transcribe_backends import NoAudioError
+            # 3. Reuse the source transcript or pick moments from YouTube captions.
             transcript = None
             # Module handover (issue #68): another module already transcribed this
             # exact source with the same backend, so reuse its output. Any problem
@@ -3061,35 +3188,35 @@ if __name__ == '__main__':
                 if transcript is not None:
                     transcript_from_cache = True
                     save_transcript_checkpoint(output_dir, transcript, input_video, duration)
-            if transcript is None:
-                try:
-                    transcript = transcribe_video(input_video)
-                    save_transcript_checkpoint(output_dir, transcript, input_video, duration)
-                except NoAudioError as e:
-                    print(f"🔇 {e} — switching to visual analysis.")
-            if transcript is not None and args.url and not transcript_from_cache:
+            if transcript and transcript.get("source") == "youtube_captions":
+                captions = transcript if not os.environ.get("MAX_SOURCE_MINUTES", "").strip() else None
+                transcript = None
+            else:
+                captions = _wait_youtube_captions(caption_lookup, duration) if transcript is None else None
+            clips_data, transcript = _select_or_transcribe(
+                input_video, duration, output_dir, transcript, captions)
+            if transcript is not None and clips_data is None and args.url and not transcript_from_cache:
                 # Kept only when this job's source is the cached file, uncut.
                 import source_cache
                 source_cache.store_transcript(args.url, duration, transcript, input_video)
 
             # Music-only or wordless footage transcribes to a handful of words.
             # Clip it by what is on screen instead, like a video with no audio.
-            if transcript is not None and speech_is_sparse(transcript, duration):
+            if clips_data is None and transcript is not None and speech_is_sparse(transcript, duration):
                 n_words = sum(len((sg.get("text") or "").split()) for sg in transcript["segments"])
                 print(f"🔇 Only {n_words} word(s) of speech in {duration:.0f}s — "
                       f"switching to visual analysis.")
                 transcript = None
 
-            # 4. Gemini Analysis (transcript-driven, or vision for silent videos)
-            early_clips = (early_state or {}).get("clips") if early_state else None
-            if (transcript is not None and early_clips
-                    and transcript is early_state["transcript"]):
-                print("♻️ Using the clips Gemini picked while the video downloaded.")
-                clips_data = early_clips
-            elif transcript is not None:
-                clips_data = get_viral_clips(transcript, duration, viewer_clips=viewer_clips)
-            else:
-                clips_data = get_visual_clips(input_video, duration, viewer_clips=viewer_clips)
+            if clips_data is None:
+                early_clips = (early_state or {}).get("clips")
+                if transcript is not None and early_clips and transcript is early_state["transcript"]:
+                    print("♻️ Using the clips Gemini picked while the video downloaded.")
+                    clips_data = early_clips
+                elif transcript is not None:
+                    clips_data = get_viral_clips(transcript, duration, viewer_clips=viewer_clips)
+                else:
+                    clips_data = get_visual_clips(input_video, duration, viewer_clips=viewer_clips)
 
         if not clips_data or 'shorts' not in clips_data:
             # Deliberately fail instead of reframing the whole video: that path
@@ -3156,10 +3283,9 @@ if __name__ == '__main__':
                     # seam there, and /api/subtitle needs it again later.
                     import layout_ranges as _layouts
                     clip['layout_ranges'] = _layouts.read(clip_final_path)
-                    # The hook was written from the transcript alone. When the
-                    # render put this clip's meaning on the screen, rewrite hook
-                    # and title from three of its frames BEFORE burning them.
-                    if success and hook_grounding.wanted(clip['layout_ranges'], end - start):
+                    if success and webcam_box is not None and hook_grounding.enabled():
+                        hook_grounding.reground(clip_final_path, clip, transcript, start, end, gameplay=True)
+                    elif success and hook_grounding.wanted(clip['layout_ranges'], end - start):
                         hook_grounding.reground(clip_final_path, clip, transcript, start, end)
                     captioned = None
                     # Pro mode replaces the file the hook and the captions go

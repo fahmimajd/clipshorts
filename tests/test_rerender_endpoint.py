@@ -251,6 +251,35 @@ class TestRerenderPaths:
         # Source-absolute times, not rebased.
         assert call["segments"] == [{"start": 45.0, "end": 55.0}]
 
+    def test_hybrid_extension_adds_only_new_whisper_words_and_reuses_them(self, job, fake_recut,
+                                                                        monkeypatch):
+        import transcribe_backends as asr
+
+        meta = json.loads(job["meta_path"].read_text())
+        meta["transcript"]["whisper_coverage"] = [[7, 43]]
+        meta["transcript"]["segments"][0]["words"] = TRANSCRIPT["segments"][0]["words"][:2]
+        job["meta_path"].write_text(json.dumps(meta))
+        cuts = []
+        monkeypatch.setattr(asr, "ASR_HOST_SLOTS", 0)
+        monkeypatch.setattr(asr, "release_models", lambda: None)
+        monkeypatch.setattr(asr.subprocess, "run", lambda cmd, **_: cuts.append(cmd))
+        monkeypatch.setattr(asr, "_transcribe_with_whisper", lambda _: {
+            "language": "en", "segments": [{"words": [
+                {"word": " new", "start": 2.75, "end": 3.15},
+            ]}],
+        })
+        request = {"job_id": JOB_ID, "clip_index": 0, "segments": [{"start": 38, "end": 48}]}
+        resp = _request("POST", "/api/clip/rerender", request)
+        assert resp.status_code == 200
+        assert resp.json()["words"][-1] == {"w": "new", "s": 45, "e": 45.4}
+        assert fake_recut[0]["captions_transcript"]["segments"][0]["words"] == [
+            {"word": " new", "start": 7, "end": 7.4}]
+        assert [(cmd[cmd.index("-ss") + 1], cmd[cmd.index("-t") + 1]) for cmd in cuts] == [
+            ("42.250", "6.500")]
+        assert _request("GET", f"/api/clip/{JOB_ID}/0/edl").json()["words"] == resp.json()["words"]
+        assert _request("POST", "/api/clip/rerender", request).status_code == 200
+        assert len(cuts) == 1
+
     def test_reapply_captions_false_skips_the_transcript(self, job, fake_recut):
         resp = _request("POST", "/api/clip/rerender", {
             "job_id": JOB_ID, "clip_index": 0, "reapply_captions": False,

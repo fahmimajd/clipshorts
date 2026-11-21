@@ -73,6 +73,14 @@ class TestChooseTrack:
         # a translation that is not a real track falls back to the default
         assert ft.choose_track(info, "ja")[:2] == ("manual", "en")
 
+    def test_original_only_excludes_translated_and_unidentified_tracks(self):
+        info = {"subtitles": {"en": _fmt()}, "automatic_captions": {"en": _fmt(), "id-orig": _fmt()}}
+        assert ft.choose_track(info, original_only=True)[:2] == ("auto", "id-orig")
+        info["subtitles"]["id"] = _fmt()
+        assert ft.choose_track(info, original_only=True)[:2] == ("manual", "id")
+        del info["automatic_captions"]
+        assert ft.choose_track(info, original_only=True)[:2] == (None, None)
+
 
 def test_parse_json3_drops_markers_and_clamps_overlaps():
     data = {"events": [

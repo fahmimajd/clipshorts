@@ -657,20 +657,22 @@ def _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box):
     if gameplay[2] * gameplay[3] == 0:
         raise ValueError("Select just the webcam, leaving some gameplay outside the box.")
 
-    def fit(label, rect, panel_h):
+    def fit(label, rect, panel_h, *, above_seam):
         x, y, w, h = rect
         scale = min(out_w / w, panel_h / h)
         scaled_w = max(2, min(out_w, 2 * round(w * scale / 2)))
         scaled_h = max(2, min(panel_h, 2 * round(h * scale / 2)))
-        px, py = 2 * ((out_w - scaled_w) // 4), 2 * ((panel_h - scaled_h) // 4)
+        px = 2 * ((out_w - scaled_w) // 4)
+        # Pad away from the caption seam so the two pictures touch.
+        py = panel_h - scaled_h if above_seam else 0
         return (f"[{label}]crop={w}:{h}:{x}:{y},scale={scaled_w}:{scaled_h},"
                 f"pad={out_w}:{panel_h}:{px}:{py}[{label}fit];")
 
     # Even heights match both renderers; the halves differ by at most two pixels.
     top_h = (out_h // 2) & ~1
     return ("[0:v]split=2[game][cam];"
-            + fit("game", gameplay, top_h)
-            + fit("cam", webcam, out_h - top_h)
+            + fit("game", gameplay, top_h, above_seam=True)
+            + fit("cam", webcam, out_h - top_h, above_seam=False)
             + "[gamefit][camfit]vstack,setsar=1[v]")
 
 

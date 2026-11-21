@@ -158,7 +158,7 @@ def _base_lang(code: str) -> str:
     return (code or "").split("-")[0].lower()
 
 
-def choose_track(info: dict, lang: Optional[str] = None):
+def choose_track(info: dict, lang: Optional[str] = None, *, original_only=False):
     """Pick the caption track to return: ``(kind, key, languages)``.
 
     kind is "manual" or "auto" (YouTube's speech recognition), key the entry
@@ -186,6 +186,18 @@ def choose_track(info: dict, lang: Optional[str] = None):
                           "name": _track_name(auto[k], code) + " (auto-generated)"})
 
     video_base = _base_lang(video_lang)
+    if original_only:
+        # Without a spoken language or an original ASR track, a manual track
+        # could be a translation. Don't use it to infer what was said.
+        spoken = video_base or (_base_lang(orig[0]) if orig else "")
+        for k in manual:
+            if spoken and _base_lang(k) == spoken:
+                return "manual", k, languages
+        for k in orig:
+            if _base_lang(k) == spoken:
+                return "auto", k, languages
+        return None, None, languages
+
     languages.sort(key=lambda l: (_base_lang(l["code"]) != video_base,
                                   _base_lang(l["code"]) != "en", l["kind"] != "manual",
                                   l["name"].lower()))
@@ -332,7 +344,7 @@ class _QuietLogger:
     def error(self, msg): pass
 
 
-def fetch_transcript(video_id: str, lang: Optional[str] = None) -> dict:
+def fetch_transcript(video_id: str, lang: Optional[str] = None, *, original_only=False) -> dict:
     """Blocking: resolve the caption track and download it. Raises
     TranscriptError with a user-facing message."""
     import yt_dlp
@@ -363,7 +375,7 @@ def fetch_transcript(video_id: str, lang: Optional[str] = None) -> dict:
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
                         info = ydl.extract_info(url, download=False)
-                        kind, key, languages = choose_track(info, lang)
+                        kind, key, languages = choose_track(info, lang, original_only=original_only)
                         meta = {
                             "video_id": video_id,
                             "title": info.get("title") or "",

@@ -301,6 +301,7 @@ CLIP RULES:
 - Return only valid JSON.
 - Each clip must be {min_secs:g} to {max_secs:g} seconds long, in absolute seconds from the start of the source video.
 - Stay within the candidate window boundaries.
+- When transcript lines begin with [seconds], use those source timestamps to locate the hook and payoff.
 - THE 2-SECOND RULE: the clip MUST open on its strongest moment. If the first
   2 seconds would not stop a cold viewer from scrolling, move the start or skip the clip.
 - Start slightly before the hook and end slightly after the payoff when possible.

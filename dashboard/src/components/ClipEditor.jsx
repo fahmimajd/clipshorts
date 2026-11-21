@@ -862,6 +862,7 @@ export default function ClipEditor({ jobId, clipIndex, clipTitle, onClose, onRer
                 throw new Error(detail);
             }
             const data = await res.json();
+            if (data.words) setEdl((current) => ({ ...current, words: data.words }));
             setRenderedSegments(data.recipe.segments.map((s) => ({ ...s })));
             setRenderedFraming(data.framing || 'auto');
             setFraming(data.framing || 'auto');

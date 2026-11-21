@@ -1,5 +1,6 @@
 import io
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,8 +63,8 @@ def test_diverse_chat_outranks_spam_with_reaction_lead_and_no_overlap():
         clip_seconds=20, limit=10,
     )
     assert clips == [
-        {"start": 65.0, "end": 85.0, "viewers": 5},
-        {"start": 11.0, "end": 31.0, "viewers": 1},
+        {"start": 60.0, "end": 80.0, "viewers": 5},
+        {"start": 6.0, "end": 26.0, "viewers": 1},
     ]
 
 
@@ -87,6 +88,16 @@ def test_reaction_messages_fit_inside_short_clips():
         [(40, "a"), (41.99, "b")], source_start=0, duration=60, clip_seconds=4, limit=1,
     )
     assert clips == [{"start": 38.0, "end": 42.0, "viewers": 2}]
+
+
+def test_ten_second_windows_overlap_and_the_late_peak_beats_the_opening():
+    events = [(20, "a"), (22, "b"), (25, "c")]
+    # One burst crosses a 10-second boundary; the first and last messages
+    # are 12 seconds apart and must not be scored together.
+    events += [(6606, "d"), (6608, "e"), (6610, "f"), (6612, "g"), (6618, "h")]
+    assert clip_candidates(events, source_start=0, duration=7200, clip_seconds=30, limit=1) == [
+        {"start": 6596.0, "end": 6626.0, "viewers": 4},
+    ]
 
 
 def _storyboard(width=160, height=90, *, host="i.ytimg.com"):
@@ -152,18 +163,23 @@ def test_preview_rejects_requests_when_both_slots_are_busy():
     assert error.value.status_code == 429
 
 
-def test_fetch_chat_uses_only_the_verified_replay_protocol(monkeypatch):
+@pytest.mark.parametrize("case", ["complete", "selected_range", "slow_complete", "deadline", "event_limit"])
+def test_fetch_chat_uses_only_verified_replay_protocol(monkeypatch, case):
     yt_dlp = pytest.importorskip("yt_dlp")
     from yt_dlp.extractor.youtube import YoutubeBaseInfoExtractor
 
     calls = []
+    clock = [0]
+    monkeypatch.setattr(youtube_live, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    if case == "event_limit":
+        monkeypatch.setattr(youtube_live, "_CHAT_MAX_EVENTS", 1)
     watch = {"contents": {"twoColumnWatchNextResults": {"conversationBar": {
         "liveChatRenderer": {"continuations": [{"reloadContinuationData": {"continuation": "first"}}]},
     }}}}
     config = {"INNERTUBE_API_KEY": "unused", "INNERTUBE_CONTEXT": {"client": {}}}
 
-    def page(author, continuation=None):
-        data = {"actions": [_replay("1000", _item("liveChatTextMessageRenderer", author))]}
+    def page(author, seconds, continuation=None):
+        data = {"actions": [_replay(str(seconds * 1000), _item("liveChatTextMessageRenderer", author))]}
         if continuation:
             data["continuations"] = [{"liveChatReplayContinuationData": {"continuation": continuation}}]
         return {"continuationContents": {"liveChatContinuation": data}}
@@ -177,13 +193,37 @@ def test_fetch_chat_uses_only_the_verified_replay_protocol(monkeypatch):
         assert youtube_live.ssrf_guard.active()
         assert self.params["proxy"] == "" and not self.params.get("cookiefile")
         calls.append(request.url)
-        responses = [watch, page("viewer-1", "next"), page("viewer-2")]
+        responses = [watch, page("viewer-1", 1, "next"), page("viewer-2", 40, "unused-next"),
+                     page("viewer-3", 42)]
         return io.BytesIO(json.dumps(responses[len(calls) - 1]).encode())
+
+    def parse_page(_self, _id, body):
+        if len(calls) == 2:
+            if case == "deadline":
+                clock[0] = 1800
+            elif case == "slow_complete":
+                clock[0] = 121
+        return json.loads(body)
 
     monkeypatch.setattr(yt_dlp.YoutubeDL, "extract_info", mock_info)
     monkeypatch.setattr(yt_dlp.YoutubeDL, "urlopen", mock_request)
-    monkeypatch.setattr(YoutubeBaseInfoExtractor, "extract_yt_initial_data", lambda _self, _id, body: json.loads(body))
+    monkeypatch.setattr(YoutubeBaseInfoExtractor, "extract_yt_initial_data", parse_page)
     monkeypatch.setattr(YoutubeBaseInfoExtractor, "extract_ytcfg", lambda _self, _id, _body: config)
-    assert youtube_live.fetch_chat(VIDEO_ID) == [(1.0, "viewer-1"), (1.0, "viewer-2")]
-    assert calls == [REPLAY["url"], "https://www.youtube.com/live_chat_replay?continuation=first",
-                     "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=unused"]
+    continuation_url = "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=unused"
+    assert_calls = [REPLAY["url"], "https://www.youtube.com/live_chat_replay?continuation=first"]
+    if case == "deadline":
+        with pytest.raises(YouTubeLiveError, match="No clips were selected") as error:
+            youtube_live.fetch_chat(VIDEO_ID)
+        assert error.value.status_code == 503
+    elif case == "selected_range":
+        assert youtube_live.fetch_chat(VIDEO_ID, source_end=40) == [(1.0, "viewer-1")]
+        assert_calls.append(continuation_url)
+    elif case == "event_limit":
+        with pytest.raises(YouTubeLiveError, match="too much live chat") as error:
+            youtube_live.fetch_chat(VIDEO_ID)
+        assert error.value.status_code == 422
+        assert_calls.append(continuation_url)
+    else:
+        assert youtube_live.fetch_chat(VIDEO_ID, source_start=30) == [(40.0, "viewer-2"), (42.0, "viewer-3")]
+        assert_calls.extend([continuation_url, continuation_url])
+    assert calls == assert_calls

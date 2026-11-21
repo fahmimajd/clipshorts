@@ -137,6 +137,17 @@ class TestPrepareOnly:
         assert main.prepare_transcript(SRC, str(tmp_path), "https://youtu.be/x", "cache")
         assert calls == [] and stored == [] and _load(tmp_path) == TRANSCRIPT
 
+    def test_caption_checkpoint_is_only_handed_to_compatible_renderers(self, tmp_path, prep,
+                                                                      monkeypatch):
+        captions = {**TRANSCRIPT, "source": "youtube_captions"}
+        monkeypatch.setattr(main, "_wait_youtube_captions", lambda lookup, _: captions if lookup else None)
+
+        assert main.prepare_transcript(SRC, str(tmp_path), "https://youtu.be/x", "1", object())
+        assert _load(tmp_path) == captions
+        assert prep == ([], [])
+        assert not main.prepare_transcript(SRC, str(tmp_path), "https://youtu.be/x", "")
+        assert _load(tmp_path) is None
+
     def test_a_failure_never_fails_the_prepare(self, tmp_path, prep, monkeypatch):
         def boom(path, slot_timeout=None):
             raise RuntimeError("no card")

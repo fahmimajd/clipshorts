@@ -18,6 +18,7 @@ _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 _PREVIEW_SLOTS = threading.BoundedSemaphore(2)
 _REPLAY = "youtube_live_chat_replay"
 _MIB = 1024 * 1024
+_CHAT_MAX_EVENTS = 250_000
 _PREVIEW_UNAVAILABLE = (
     "This stream has no landscape preview frame. If it just ended, try again after YouTube finishes processing it."
 )
@@ -61,7 +62,9 @@ def _on_routes(video_id, operation, *, timeout, max_bytes, max_requests):
     requests = 0
 
     def budget_error():
-        return YouTubeLiveError(503, "YouTube did not finish sending this replay in time. Try again or choose a shorter replay.")
+        return YouTubeLiveError(
+            503, "YouTube chat replay reached the download limit. No clips were selected. "
+                 "Try again or choose a shorter replay or an earlier range.")
 
     class BoundedYDL(YoutubeDL):
         def build_request_director(self, handlers, preferences=None):
@@ -252,15 +255,20 @@ def _message_events(line):
                 break
 
 
-def fetch_chat(video_id: str) -> list[tuple[float, str]]:
-    """Read only replay chat, retaining timestamps and author IDs in memory."""
-    def read_chat(ydl, _info, _duration, replay):
+def fetch_chat(video_id: str, *, source_start: float = 0,
+               source_end: float = math.inf) -> list[tuple[float, str]]:
+    """Download a complete replay or selected range before returning its chat events."""
+    def read_chat(ydl, _info, duration, replay):
         from yt_dlp.downloader.youtube_live_chat import YoutubeLiveChatFD
         from yt_dlp.networking import Request
 
         # Use the upstream continuation parser but keep raw watch pages and chat
         # out of FragmentFD's scratch files and never write the raw JSONL stream.
         events = []
+        stop_at = min(source_end, duration)
+
+        class RangeComplete(Exception):
+            pass
 
         class ReplayFD(YoutubeLiveChatFD):
             def _prepare_and_start_frag_download(self, ctx, info_dict):
@@ -275,46 +283,65 @@ def fetch_chat(video_id: str) -> list[tuple[float, str]]:
                 return ctx.pop("body")
 
             def _append_fragment(self, ctx, data):
+                reached_end = False
                 for line in io.BytesIO(data):
                     for event in _message_events(line):
-                        if len(events) >= 250_000:
-                            raise YouTubeLiveError(422, "This replay has too much live chat to analyze. Choose a shorter replay.")
+                        seconds, _ = event
+                        if seconds >= stop_at:
+                            reached_end = True
+                            continue
+                        if seconds < source_start:
+                            continue
+                        if len(events) >= _CHAT_MAX_EVENTS:
+                            raise YouTubeLiveError(
+                                422, "This replay has too much live chat to analyze. Choose a shorter replay.")
                         events.append(event)
+                if reached_end:
+                    raise RangeComplete
 
             def _finish_frag_download(self, ctx, info_dict):
-                if not events:
+                if not events and source_start == 0 and source_end >= duration:
                     raise YouTubeLiveError(422, "The live chat replay contains no viewer messages. Choose a stream with active chat.")
                 return True
 
-        if not ReplayFD(ydl, ydl.params).real_download("-", replay):
-            raise ValueError("incomplete chat replay")
+        try:
+            if not ReplayFD(ydl, ydl.params).real_download("-", replay):
+                raise ValueError("incomplete chat replay")
+        except RangeComplete:
+            pass
         return events
 
-    return _on_routes(video_id, read_chat, timeout=120, max_bytes=128 * _MIB, max_requests=4000)
+    return _on_routes(video_id, read_chat, timeout=1800, max_bytes=512 * _MIB, max_requests=4000)
 
 
 def clip_candidates(events, *, source_start, duration, clip_seconds, limit):
-    """Rank distinct chatter counts and rebase non-overlapping cuts to the rendered source."""
+    """Rank 10-second windows by unique chatters, stepping by 5 seconds."""
     if duration <= 0 or clip_seconds <= 0 or limit <= 0:
         return []
     source_end = source_start + duration
     ordered = sorted((t, author) for t, author in events if source_start <= t < source_end)
     length = min(float(clip_seconds), float(duration))
-    lead = min(5.0, length / 2)
-    window = min(15.0, length - lead)
+    lead = min(10.0, length / 2)
+    window = min(10.0, length - lead)
+    step = window / 2
     active = Counter()
     peaks = []
-    right = 0
-    for left, (onset, author) in enumerate(ordered):
-        while right < len(ordered) and ordered[right][0] - onset < window:
+    left = right = 0
+    for bucket in range(math.ceil(duration / step)):
+        window_start = source_start + bucket * step
+        while left < right and ordered[left][0] < window_start:
+            author = ordered[left][1]
+            active[author] -= 1
+            if not active[author]:
+                del active[author]
+            left += 1
+        while right < len(ordered) and ordered[right][0] < window_start + window:
             active[ordered[right][1]] += 1
             right += 1
-        if left == 0 or onset != ordered[left - 1][0]:
-            start = max(0.0, min(onset - source_start - lead, duration - length))
+        if active:
+            first_message = ordered[left][0]
+            start = max(0.0, min(first_message - source_start - lead, duration - length))
             peaks.append((-len(active), start))
-        active[author] -= 1
-        if not active[author]:
-            del active[author]
 
     clips = []
     for score, start in sorted(peaks):

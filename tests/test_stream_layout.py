@@ -38,8 +38,8 @@ def test_corner_box_keeps_the_largest_gameplay_rectangle():
     game, webcam = gpu_render.layers_from_graph(graph, 1920, 1080, 1080, 1920)
     assert game["src"] == [0, 0, 1536, 1080]
     assert webcam["src"] == [1536, 810, 384, 270]
-    assert game["dst"] == [0, 100, 1080, 760]
-    assert webcam["dst"] == [0, 1060, 1080, 760]
+    assert game["dst"] == [0, 200, 1080, 760]
+    assert webcam["dst"] == [0, 960, 1080, 760]
 
 
 def test_fractional_box_does_not_leak_into_gameplay():
@@ -91,7 +91,7 @@ def test_stream_render_stacks_gameplay_and_webcam_and_keeps_audio(tmp_path, monk
     finally:
         cap.release()
     assert ok and frame.shape[:2] == (1920, 1080)
-    game_pixel, webcam_pixel = frame[480, 540], frame[1440, 540]
+    game_pixel, webcam_pixel = frame[959, 540], frame[960, 540]
     assert game_pixel[0] > 200 and game_pixel[2] < 40
     assert webcam_pixel[2] > 200 and webcam_pixel[0] < 40
     assert layout_ranges.split_ranges(layout_ranges.read(str(output))) == [(0.0, 0.5)]

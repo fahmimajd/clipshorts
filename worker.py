@@ -353,7 +353,8 @@ def main():
         claimed = False
         if len(running) < SLOTS:
             try:
-                r = _call("POST", "/internal/worker/claim", tries=1, json={"worker": NAME})
+                r = _call("POST", "/internal/worker/claim", tries=1,
+                          json={"worker": NAME, "youtube_captions": True})
                 body = r.json() if r.status_code == 200 else {}
                 if body.get("job_id") and not valid_job_id(body["job_id"]):
                     log("claim: job id refused")

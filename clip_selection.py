@@ -255,12 +255,17 @@ def build_transcript_windows(transcript_result, video_duration,
             if segments[j][1] - w_start >= window_seconds:
                 break
         w_end = segments[j][1]
-        windows.append({
+        window = {
             "id": f"window_{window_index:03d}",
             "start": round(w_start, 3),
             "end": round(w_end, 3),
             "text": " ".join(seg[2] for seg in segments[i:j + 1]),
-        })
+        }
+        if transcript_result.get("source") == "youtube_captions":
+            window["timed_text"] = "\n".join(
+                f"[{start:.1f}s] {text}"
+                for start, _, text in segments[i:j + 1])
+        windows.append(window)
         window_index += 1
 
         if j >= n - 1:
