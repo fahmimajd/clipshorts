@@ -41,7 +41,7 @@ from collections import OrderedDict, defaultdict, deque
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -852,14 +852,7 @@ def shape_result(mode: str, data: dict) -> dict:
     return {"tags": tags, "characters": len(",".join(tags))}
 
 
-def _gemini_key():
-    try:
-        from cloud import managed_keys
-        key = managed_keys.gemini_key()
-        if key:
-            return key
-    except Exception:
-        pass
+def metadata_gemini_key():
     return os.environ.get("GEMINI_API_KEY", "").strip() or None
 
 
@@ -874,10 +867,10 @@ def _thinking_config(types):
         return None
 
 
-def _generate(prompt: str) -> dict:
+def _generate(prompt: str, api_key: str) -> dict:
     from google import genai
     from google.genai import types
-    client = genai.Client(api_key=_gemini_key())
+    client = genai.Client(api_key=api_key)
     resp = client.models.generate_content(
         model=METADATA_MODEL,
         contents=[prompt],
@@ -898,7 +891,8 @@ def _generate(prompt: str) -> dict:
 
 
 @router.post("/api/tools/youtube-metadata")
-async def youtube_metadata(payload: MetadataRequest, request: Request):
+async def youtube_metadata(payload: MetadataRequest, request: Request,
+                           api_key: str | None = Depends(metadata_gemini_key)):
     mode = (payload.mode or "").strip().lower()
     if mode not in MODES:
         raise HTTPException(status_code=400, detail={"code": "bad_mode", "message": "Unknown mode."})
@@ -910,7 +904,7 @@ async def youtube_metadata(payload: MetadataRequest, request: Request):
     topic = topic[:MAX_BRIEF]
     keyword = re.sub(r"[\"\n\r{}]", " ", (payload.keyword or "")).strip()[:80]
     audience = re.sub(r"[\n\r{}]", " ", (payload.audience or "")).strip()[:120]
-    if not _gemini_key():
+    if not api_key:
         raise HTTPException(status_code=503, detail={
             "code": "not_configured", "message": "This tool needs a Gemini API key on the server."})
     _enforce("metadata", request)
@@ -918,7 +912,7 @@ async def youtube_metadata(payload: MetadataRequest, request: Request):
     last = None
     for _ in range(2):
         try:
-            data = await asyncio.wait_for(asyncio.to_thread(_generate, prompt), timeout=40)
+            data = await asyncio.wait_for(asyncio.to_thread(_generate, prompt, api_key), timeout=40)
             return {"mode": mode, **shape_result(mode, data)}
         except asyncio.TimeoutError:
             last = "timeout"

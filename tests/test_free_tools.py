@@ -177,11 +177,11 @@ def test_transcript_endpoint_caches_and_maps_errors(monkeypatch):
 
 
 def test_metadata_endpoint_validates_input(monkeypatch):
-    monkeypatch.setattr(ft, "_gemini_key", lambda: "k")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
     c = _client()
     assert c.post("/api/tools/youtube-metadata", json={"mode": "x", "topic": "a" * 40}).status_code == 400
     assert c.post("/api/tools/youtube-metadata", json={"mode": "tags", "topic": "short"}).status_code == 400
-    monkeypatch.setattr(ft, "_generate", lambda prompt: {"tags": ["a b", "c"]})
+    monkeypatch.setattr(ft, "_generate", lambda prompt, api_key: {"tags": ["a b", "c"]})
     r = c.post("/api/tools/youtube-metadata", json={"mode": "tags", "topic": "A video about sourdough bread at home"})
     assert r.status_code == 200 and r.json()["tags"] == ["a b", "c"]
 

@@ -4454,6 +4454,20 @@ app.include_router(_mcp_server.router)
 # Free public tools behind the /tools SEO pages: YouTube transcript (existing
 # captions only, never the GPU) and the title/description/tag generator.
 import free_tools as _free_tools
+
+
+def _metadata_gemini_key():
+    try:
+        from cloud import managed_keys
+        key = managed_keys.gemini_key()
+        if key:
+            return key
+    except Exception:
+        pass
+    return _free_tools.metadata_gemini_key()
+
+
+app.dependency_overrides[_free_tools.metadata_gemini_key] = _metadata_gemini_key
 app.include_router(_free_tools.router)
 
 # Enable CORS for frontend. Cloud mode locks this down to the configured origins;
