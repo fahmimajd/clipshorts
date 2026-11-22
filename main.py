@@ -25,6 +25,7 @@ from google import genai
 from google.genai import types as genai_types
 
 import frame_sampler
+import campaign
 import gpu_decode
 import gemini_worker
 import hook_grounding
@@ -1355,7 +1356,8 @@ def finalize_clip_passthrough(input_video, final_output_video):
 
 
 def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=None,
-                      plan_only=False, mark=False, style=None, *, clip_number=None):
+                      plan_only=False, mark=False, style=None, *, clip_number=None,
+                      live_banner=None):
     """Burn the default caption style onto a finished clip.
 
     ``split_ranges``: (start, end) stretches, in clip seconds, rendered with
@@ -1420,12 +1422,16 @@ def auto_caption_clip(clip_path, transcript, clip_start, clip_end, split_ranges=
             output_dir, f"autosubs_{generation_id}_{uuid.uuid4().hex[:8]}.ass")
         out_path = os.path.join(output_dir, f"subtitled_{generation_id}_{stem}")
 
-        if split_ranges is None:
+        if split_ranges is None or live_banner is None:
             import layout_ranges as _layouts
-            split_ranges = _layouts.split_ranges(_layouts.read(clip_path))
+            ranges = _layouts.read(clip_path)
+            if split_ranges is None:
+                split_ranges = _layouts.split_ranges(ranges)
+            if live_banner is None:
+                live_banner = _layouts.has_live_banner(ranges)
         if not _subs.generate_ass(
                 transcript, clip_start, clip_end, ass_path,
-                split_ranges=split_ranges,
+                split_ranges=split_ranges, live_banner=live_banner,
                 max_chars=style["max_chars"], max_duration=style["max_duration"],
                 alignment=style["alignment"], fontsize=style["font_size"],
                 font_name=style["font_name"], font_color=style["font_color"],
@@ -3244,6 +3250,10 @@ if __name__ == '__main__':
             write_json_atomic(metadata_file, clips_data, indent=2)
             print(f"   Saved metadata to {metadata_file}")
 
+            has_campaign_assets = campaign.has_assets(output_dir)
+            free_mark = os.environ.get("WATERMARK") == "1"
+            inline_mark = free_mark and not has_campaign_assets
+
             # 5. Process clips in parallel: each worker cuts + renders one
             # clip. Renders are mostly ffmpeg subprocesses (parallelize well);
             # detector inference is serialized internally via DETECT_LOCK.
@@ -3299,6 +3309,7 @@ if __name__ == '__main__':
                         words, w_start, w_end = pro[1:]
                         cap_style = clip.get('caption_style')
                     split_ranges = _layouts.split_ranges(clip['layout_ranges'])
+                    live_banner = _layouts.has_live_banner(clip['layout_ranges'])
                     if success and os.environ.get("AUTO_HOOK") == "1":
                         # Captions ride the hook's ffmpeg (one decode, two
                         # outputs) when both are on; see auto_hook_clip.
@@ -3306,9 +3317,9 @@ if __name__ == '__main__':
                         if (clip.get('viral_hook_text') or '').strip():
                             plan = auto_caption_clip(base_path, words, w_start, w_end,
                                                      split_ranges=split_ranges, plan_only=True,
-                                                     style=cap_style)
+                                                     style=cap_style, live_banner=live_banner)
                         hooked = auto_hook_clip(base_path, clip, captions=plan,
-                                                mark=os.environ.get("WATERMARK") == "1",
+                                                mark=inline_mark,
                                                 clip_number=i + 1)
                         if hooked:
                             deliver_path, clip['auto_hook'] = hooked
@@ -3318,10 +3329,12 @@ if __name__ == '__main__':
                             captioned = auto_caption_clip(
                                 deliver_path, words, w_start, w_end,
                                 split_ranges=split_ranges,
-                                mark=os.environ.get("WATERMARK") == "1",
+                                mark=inline_mark, live_banner=live_banner,
                                 style=cap_style, clip_number=i + 1)
                         served = captioned or deliver_path
-                        if os.environ.get("WATERMARK") == "1":
+                        if has_campaign_assets:
+                            served = campaign.render(served, live_banner=live_banner)
+                        if free_mark:
                             served = mark_delivery(served)
                         print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
                         # Hand the API the file to actually serve for this clip.
@@ -3344,7 +3357,7 @@ if __name__ == '__main__':
             clip_workers = max(int(os.environ.get("CLIP_WORKERS", "6")), 1)
             shorts = clips_data['shorts']
             failed = []
-            if os.environ.get("WATERMARK") == "1":
+            if free_mark:
                 # Tells the /videos guard that the clean twins in this
                 # directory are not for serving (watermarked.MARKER_FILE).
                 import watermarked
@@ -3381,8 +3394,8 @@ if __name__ == '__main__':
 
             # Persist per-clip render results added by the workers (auto_hook)
             # so the editor can see what is already burned into each clip.
-            if any('auto_hook' in c or 'hook_grounding' in c or 'pro_suggested' in c
-                   for c in shorts):
+            if any(c.get('layout_ranges') or 'auto_hook' in c or 'hook_grounding' in c
+                   or 'pro_suggested' in c for c in shorts):
                 # Atomic: the dashboard is already reading this file for the
                 # clips announced above (CLIP_READY).
                 write_json_atomic(metadata_file, clips_data, indent=2)

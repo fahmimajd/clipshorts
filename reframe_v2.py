@@ -640,7 +640,7 @@ def encode_scenes(input_video, specs, orig_w, orig_h, out_w, out_h, fps,
     ])
 
 
-def _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box):
+def _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box, *, live_banner=False, reserve_banner=True):
     x, y, w, h = camera_inset.normalize_manual_box(webcam_box)
     # Round out to chroma boundaries so no part of the webcam leaks into gameplay.
     left, top = 2 * int(x * orig_w / 2), 2 * int(y * orig_h / 2)
@@ -657,23 +657,30 @@ def _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box):
     if gameplay[2] * gameplay[3] == 0:
         raise ValueError("Select just the webcam, leaving some gameplay outside the box.")
 
-    def fit(label, rect, panel_h, *, above_seam):
-        x, y, w, h = rect
-        scale = min(out_w / w, panel_h / h)
-        scaled_w = max(2, min(out_w, 2 * round(w * scale / 2)))
-        scaled_h = max(2, min(panel_h, 2 * round(h * scale / 2)))
-        px = 2 * ((out_w - scaled_w) // 4)
-        # Pad away from the caption seam so the two pictures touch.
-        py = panel_h - scaled_h if above_seam else 0
-        return (f"[{label}]crop={w}:{h}:{x}:{y},scale={scaled_w}:{scaled_h},"
-                f"pad={out_w}:{panel_h}:{px}:{py}[{label}fit];")
-
-    # Even heights match both renderers; the halves differ by at most two pixels.
     top_h = (out_h // 2) & ~1
+    game_h = top_h
+    if live_banner:
+        banner_y, top_h = layout_ranges.live_banner_slot(out_h)
+        game_h = banner_y if reserve_banner else top_h
+
+    gx, gy, gw, gh = gameplay
+    scale = min(out_w / gw, game_h / gh)
+    scaled_w = max(2, min(out_w, 2 * round(gw * scale / 2)))
+    scaled_h = max(2, min(game_h, 2 * round(gh * scale / 2)))
+    px = 2 * ((out_w - scaled_w) // 4)
+    py = game_h - scaled_h
+
+    x, y, w, h = webcam
+    cam_h = out_h - top_h
+    crop_w = max(2, min(w, 2 * round(h * out_w / cam_h / 2)))
+    crop_h = max(2, min(h, 2 * round(w * cam_h / out_w / 2)))
+    x += 2 * ((w - crop_w) // 4)
+    y += 2 * ((h - crop_h) // 4)
     return ("[0:v]split=2[game][cam];"
-            + fit("game", gameplay, top_h, above_seam=True)
-            + fit("cam", webcam, out_h - top_h, above_seam=False)
-            + "[gamefit][camfit]vstack,setsar=1[v]")
+            f"[game]crop={gw}:{gh}:{gx}:{gy},scale={scaled_w}:{scaled_h},"
+            f"pad={out_w}:{top_h}:{px}:{py}[gamefit];"
+            f"[cam]crop={crop_w}:{crop_h}:{x}:{y},scale={out_w}:{cam_h}[camfit];"
+            "[gamefit][camfit]vstack,setsar=1[v]")
 
 
 def render_stream(input_video, final_output_video, webcam_box, watermark=False):
@@ -697,7 +704,12 @@ def render_stream(input_video, final_output_video, webcam_box, watermark=False):
         raise ValueError("Could not read the gaming stream clip's frame rate or duration.")
     dur = frames / fps
     out_w, out_h = delivery_size(orig_w, orig_h, 9 / 16)
-    graph = _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box)
+    import campaign
+    job_dir = os.path.dirname(final_output_video)
+    motion_logo = os.path.isfile(os.path.join(job_dir, campaign.MOTION_LOGO_ASSET))
+    live_banner = motion_logo or os.path.isfile(os.path.join(job_dir, campaign.LOGO_ASSET))
+    graph = _stream_filtergraph(orig_w, orig_h, out_w, out_h, webcam_box,
+                                live_banner=live_banner, reserve_banner=not motion_logo)
 
     logo = None
     if watermark:
@@ -709,7 +721,7 @@ def render_stream(input_video, final_output_video, webcam_box, watermark=False):
     with tempfile.TemporaryDirectory(prefix="reframe_stream_") as workdir:
         encode_scenes(input_video, [(0, dur, graph, None)], orig_w, orig_h,
                       out_w, out_h, fps, workdir, logo, final_output_video)
-    layout_ranges.write(final_output_video, [(0, dur, "SPLIT")])
+    layout_ranges.write(final_output_video, [(0, dur, layout_ranges.LIVE_BANNER if live_banner else "SPLIT")])
     return True
 
 

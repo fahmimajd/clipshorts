@@ -34,10 +34,10 @@ dispatched the job keeps following it.
 ## Which jobs go
 
 `app._remote_eligible`: a free job (normal or slow lane) that never failed
-here, whose command the worker can repeat (no precomputed transcript, not a
-Twitch VOD) and that runs on the server's own model key. And only while a job
-is already waiting for a GPU slot: with room on the card the job runs here,
-where it is faster. Paid jobs never leave the GPU host.
+here, whose command the worker can repeat (no precomputed transcript,
+Twitch VOD, or campaign assets) and that runs on the server's own model key.
+A job only goes remote while it waits for a GPU slot. With room on the card,
+it runs here, where it is faster. Paid jobs never leave the GPU host.
 
 A remote job is in `_running_jobs` (a drain waits for it, its manifest is
 heartbeated, expiry and sweeps see it as live) and in `_remote_jobs`, so it

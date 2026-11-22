@@ -28,6 +28,7 @@ The scoring is pure (normalised boxes in, a height out) so it is tested with
 synthetic faces; ``detect_faces`` is the only part that touches pixels.
 """
 import threading
+from layout_ranges import LIVE_BANNER
 
 # All heights are fractions of the frame height (0 = top edge).
 TOP_MARGIN = 0.06       # status bar / "Following | For you" tabs
@@ -92,8 +93,6 @@ def caption_bands(ranges, window_start, window_end, has_captions=True):
     """The caption bands the hook must stay off during its window.
     ``ranges`` is the clip's layout_ranges: SPLIT stretches put captions on
     the seam, everything else (or no sidecar at all) at the bottom."""
-    if not has_captions:
-        return []
     bands = set()
     covered = 0.0
     for r in ranges or []:
@@ -105,9 +104,12 @@ def caption_bands(ranges, window_start, window_end, has_captions=True):
         if e <= s:
             continue
         covered += e - s
-        bands.add(SEAM_CAPTIONS if layout == "split" else BOTTOM_CAPTIONS)
+        if layout == LIVE_BANNER:
+            bands.add((0.35 if has_captions else 0.51, 0.60))
+        elif has_captions:
+            bands.add(SEAM_CAPTIONS if layout == "split" else BOTTOM_CAPTIONS)
     # Any part of the window no range describes keeps the default captions.
-    if covered < (window_end - window_start) - 1e-3:
+    if has_captions and covered < (window_end - window_start) - 1e-3:
         bands.add(BOTTOM_CAPTIONS)
     return sorted(bands)
 

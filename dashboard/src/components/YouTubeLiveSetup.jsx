@@ -1,46 +1,40 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch, openQuotaWall, QuotaError } from '../lib/api';
 
-const EMPTY_BOX = ['', '', '', ''];
-const BOX_LABELS = ['Left', 'Top', 'Width', 'Height'];
+const DEFAULT_BOX = ['84', '55', '16'];
+const BOX_LABELS = ['Left', 'Top'];
 const PREVIEW_ERROR = 'Could not load a frame. Check the replay link and try again.';
 const FIELD_CLASS = 'input-field clip-field min-h-11 min-w-0 !px-2 tabular-nums transition-none';
 
-function normalizedBox(fields) {
-    const rect = fields.map((field) => field === '' ? NaN : Number(field) / 100);
-    const [x, y, w, h] = rect;
-    if (!rect.every(Number.isFinite) || x < 0 || y < 0 || w < 0.01 || h < 0.01
-        || x + w > 1 || y + h > 1 || (w === 1 && h === 1)) return null;
-    return rect;
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const percent = (value) => String(Math.round(value * 10000) / 100);
+
+function placeBox([, , w, h], x, y) {
+    return [clamp(x, 0, 1 - w), clamp(y, 0, 1 - h), w, h];
+}
+
+function sizedBox(fields, heightPerWidth, minSize, maxSize) {
+    const [x, y, width] = fields.map((field) => field === '' ? NaN : Number(field) / 100);
+    if (![x, y, width].every(Number.isFinite)) return null;
+    if (minSize > maxSize) return null;
+    const w = clamp(width, minSize / 100, maxSize / 100);
+    return placeBox([0, 0, w, Math.max(0.01, w * heightPerWidth)], x, y);
 }
 
 function pointOnFrame(event) {
     const { left, top, width, height } = event.currentTarget.getBoundingClientRect();
-    const units = (value) => Math.min(10000, Math.max(0, Math.round(value * 10000)));
-    return [units((event.clientX - left) / width), units((event.clientY - top) / height)];
+    return [(event.clientX - left) / width, (event.clientY - top) / height];
 }
 
-function boxBetween([x1, y1], [x2, y2]) {
-    return [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x1 - x2), Math.abs(y1 - y2)].map((units) => String(units / 100));
-}
-
-if (import.meta.env.DEV) {
-    const corner = normalizedBox(boxBetween([10000, 10000], [9900, 9900]));
-    console.assert(corner?.[0] === 0.99 && corner?.[2] === 0.01
-        && !normalizedBox(['99', '99', '2', '1'])
-        && !normalizedBox(['1', '1', '1', '0.99'])
-        && !normalizedBox(['0', '0', '100', '100']), 'Webcam box bounds');
-}
-
-export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
+export default function YouTubeLiveSetup({ url, hasWatermark, onWebcamChange, onSignIn }) {
     const { billingEnabled, isSignedIn, isManaged, loading: authLoading } = useAuth();
     const [preview, setPreview] = useState(null);
-    const [readyPreview, setReadyPreview] = useState(null);
-    const imageReady = preview !== null && readyPreview === preview;
+    const [frame, setFrame] = useState(null);
+    const imageReady = preview !== null && frame?.preview === preview;
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [fields, setFields] = useState(EMPTY_BOX);
+    const [fields, setFields] = useState(DEFAULT_BOX);
     const [draft, setDraft] = useState(null);
     const timeInput = useRef(null);
     const request = useRef(null);
@@ -48,10 +42,14 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
 
     useEffect(() => () => request.current?.abort(), []);
 
-    const changeBox = (next) => {
-        setFields(next);
-        onWebcamChange(normalizedBox(next));
-    };
+    // Match the webcam panel's share of the final 9:16 canvas.
+    const heightPerWidth = imageReady ? frame.aspect * (hasWatermark ? 0.4 : 0.5) * 16 / 9 : 0;
+    const minSize = Math.ceil(Math.max(1, 1 / heightPerWidth) * 10) / 10;
+    const maxSize = Math.floor(Math.min(95, 95 / heightPerWidth) * 10) / 10;
+    const box = useMemo(() => sizedBox(fields, heightPerWidth, minSize, maxSize),
+        [fields, heightPerWidth, minSize, maxSize]);
+    const selected = draft ? null : box;
+    useEffect(() => onWebcamChange(selected), [selected, onWebcamChange]);
 
     const needsSignIn = billingEnabled && !isSignedIn;
     const needsPlan = billingEnabled && !isManaged;
@@ -66,12 +64,12 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
         const controller = new AbortController();
         request.current = controller;
         setPreview(null);
-        setReadyPreview(null);
+        setFrame(null);
         setError('');
         setLoading(true);
         drag.current = null;
         setDraft(null);
-        changeBox(EMPTY_BOX);
+        onWebcamChange(null);
         try {
             const response = await apiFetch(`/api/youtube-live/preview?${query}`, { signal: controller.signal });
             const data = await response.json().catch(() => null);
@@ -96,28 +94,45 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
     };
 
     const startDrag = (event) => {
-        if (!imageReady || event.button !== 0 || drag.current) return;
-        const start = pointOnFrame(event);
+        if (!box || event.button !== 0 || drag.current) return;
+        const [x, y] = pointOnFrame(event);
+        const [bx, by, w, h] = box;
+        const inside = x >= bx && x <= bx + w && y >= by && y <= by + h;
+        const offset = inside ? [x - bx, y - by] : [w / 2, h / 2];
         event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { id: event.pointerId, start };
-        setDraft(boxBetween(start, start));
-        onWebcamChange(null);
+        drag.current = { id: event.pointerId, box, offset };
+        setDraft(placeBox(box, x - offset[0], y - offset[1]));
     };
 
     const moveDrag = (event) => {
-        if (drag.current?.id === event.pointerId) setDraft(boxBetween(drag.current.start, pointOnFrame(event)));
+        const active = drag.current;
+        if (active?.id !== event.pointerId) return;
+        const [x, y] = pointOnFrame(event);
+        setDraft(placeBox(active.box, x - active.offset[0], y - active.offset[1]));
     };
 
     const finishDrag = (event) => {
-        if (drag.current?.id !== event.pointerId) return;
-        const next = event.type === 'pointerup' ? boxBetween(drag.current.start, pointOnFrame(event)) : fields;
+        const active = drag.current;
+        if (active?.id !== event.pointerId) return;
         drag.current = null;
         setDraft(null);
-        changeBox(next);
+        if (event.type === 'pointerup') {
+            const [x, y] = pointOnFrame(event);
+            const next = placeBox(active.box, x - active.offset[0], y - active.offset[1]);
+            setFields([percent(next[0]), percent(next[1]), fields[2]]);
+        }
     };
 
-    const selected = !draft && normalizedBox(fields);
-    const overlay = draft || (selected && fields);
+    const resizeBox = (event) => {
+        if (!box || drag.current) return;
+        const [x, y, w, h] = box;
+        const width = event.currentTarget.valueAsNumber / 100;
+        const height = width * heightPerWidth;
+        const [left, top] = placeBox([0, 0, width, height], x + (w - width) / 2, y + (h - height) / 2);
+        setFields([percent(left), percent(top), event.currentTarget.value]);
+    };
+
+    const overlay = draft || box;
     return (
         <div className="space-y-3">
             <div className="flex flex-wrap items-end gap-2">
@@ -142,7 +157,7 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
             </div>
             {preview ? (
                 <div
-                    className={`relative overflow-hidden rounded-input bg-paper ring-1 ring-muted ${imageReady ? 'cursor-crosshair select-none touch-pinch-zoom' : ''}`}
+                    className={`relative overflow-hidden rounded-input bg-paper ring-1 ring-muted ${box ? 'cursor-grab active:cursor-grabbing select-none touch-pinch-zoom' : ''}`}
                     onPointerDown={startDrag}
                     onPointerMove={moveDrag}
                     onPointerUp={finishDrag}
@@ -154,7 +169,7 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
                         alt="Frame from the YouTube livestream replay"
                         className="block h-auto w-full [aspect-ratio:auto_16/9]"
                         draggable={false}
-                        onLoad={() => setReadyPreview(preview)}
+                        onLoad={({ currentTarget: image }) => setFrame({ preview, aspect: image.naturalWidth / image.naturalHeight })}
                         onError={() => { setPreview(null); setError(PREVIEW_ERROR); }}
                     />
                     {!imageReady && <p className="absolute inset-0 grid place-items-center bg-paper text-xs text-muted" role="status">Loading the frame…</p>}
@@ -162,7 +177,7 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
                         <div
                             aria-hidden="true"
                             className="pointer-events-none absolute bg-brass/10 ring-2 ring-inset ring-brass shadow-[0_0_0_1px_black]"
-                            style={{ left: `${overlay[0]}%`, top: `${overlay[1]}%`, width: `${overlay[2]}%`, height: `${overlay[3]}%` }}
+                            style={{ left: `${overlay[0] * 100}%`, top: `${overlay[1] * 100}%`, width: `${overlay[2] * 100}%`, height: `${overlay[3] * 100}%` }}
                         />
                     )}
                 </div>
@@ -175,21 +190,38 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
             )}
             {imageReady && (
                 <fieldset className="min-w-0 space-y-2">
-                    <legend className="text-sm font-medium text-ink">Webcam box</legend>
+                    <legend className="text-sm font-medium text-ink">Webcam crop</legend>
                     <p className="readout tabular-nums">Frame at {preview.seconds}s of {preview.duration}s</p>
                     <p className="text-xs leading-relaxed text-ink2">
-                        Drag around the webcam or enter its position and size as percentages. This box is used for the entire replay.
+                        Drag the box onto the webcam or tap the frame to move it. Resize it with the slider; its shape stays fixed.
                     </p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {box && (
+                        <label className="block text-xs text-ink2">
+                            <span className="flex items-center justify-between">
+                                <span>Webcam size</span>
+                                <span className="readout tabular-nums" aria-hidden="true">{percent(box[2])}%</span>
+                            </span>
+                            <input
+                                type="range" min={minSize} max={maxSize} step="0.1" value={percent(box[2])}
+                                aria-valuetext={`${percent(box[2])}% of the frame width`}
+                                onChange={resizeBox}
+                                className="block min-h-11 w-full cursor-pointer accent-[var(--color-accent)]"
+                            />
+                        </label>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
                         {BOX_LABELS.map((label, i) => (
                             <label key={label} className="min-w-0 text-xs text-ink2">
                                 <span className="mb-1.5 block">{label} (%)</span>
                                 <input
-                                    type="number" min={i < 2 ? 0 : 1} max="100" step="any" inputMode="decimal"
+                                    type="number" min="0" max="100" step="any" inputMode="decimal"
                                     value={fields[i]}
                                     onChange={(event) => {
                                         if (drag.current) return;
-                                        changeBox(fields.map((field, j) => j === i ? event.target.value : field));
+                                        setFields(fields.map((field, j) => j === i ? event.target.value : field));
+                                    }}
+                                    onBlur={() => {
+                                        if (box && !drag.current) setFields(box.slice(0, 3).map(percent));
                                     }}
                                     className={FIELD_CLASS}
                                 />
@@ -197,7 +229,7 @@ export default function YouTubeLiveSetup({ url, onWebcamChange, onSignIn }) {
                         ))}
                     </div>
                     <p className="text-xs leading-relaxed text-muted" role="status">
-                        {selected ? 'Webcam box selected.' : 'Keep the box inside the frame and at least 1% wide and tall. Leave some of the frame outside the box.'}
+                        {selected ? 'Webcam fills the bottom panel without side bars.' : draft ? 'Moving webcam crop.' : 'Enter a position inside the frame.'}
                     </p>
                 </fieldset>
             )}

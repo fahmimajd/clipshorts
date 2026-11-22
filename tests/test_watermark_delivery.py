@@ -221,6 +221,20 @@ class TestArchiveTwins:
             "hooked_2_t_clip_1.mp4"]
         assert videos._twins_to_archive("t_clip_1.mp4", "t", 0) == []
 
+    def test_campaign_logo_survives_free_plan_upgrade_and_later_edits(self):
+        videos = pytest.importorskip("cloud.videos")
+        unbranded = "subtitled_3_hooked_2_t_clip_1.mp4"
+        branded = f"campaign_{unbranded}"
+        served = f"wm_{branded}"
+        assert videos._twins_to_archive(served, "t", 0) == [
+            branded, unbranded, "hooked_2_t_clip_1.mp4"]
+        _, changes = videos.unmarked_clip_state(
+            {"clips": [{"index": 0, "server_file": served}]})
+        assert changes == [(0, served, branded)]
+        assert videos._superseded_names(
+            branded, "campaign_t_clip_1.mp4", "campaign_hooked_2_t_clip_1.mp4", "t", 0
+        ) == [branded, unbranded]
+
     def test_superseded_never_touches_master_or_original(self):
         videos = pytest.importorskip("cloud.videos")
         # An edit on a free job: the previous marked file and its clean twin go.

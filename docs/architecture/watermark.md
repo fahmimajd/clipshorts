@@ -43,3 +43,17 @@ and "upgrade to remove the watermark" would be false for clips already made.
   carry `CheckoutStarted` `source=watermark`. From a download it downloads the
   clip first. Going straight to the Starter checkout instead (5-7 Oct 2026)
   left far more of those checkouts unpaid.
+
+## Campaign assets
+
+The optional `.campaign-watermark.png` or `.campaign-watermark.mov` and the
+`.campaign-outro.mp4` stay in the job directory for retries and Cloud restores.
+They have no public media URLs. `campaign.render` burns the watermark at the
+top center, or along the YouTube Live gameplay/webcam divider. Live PNGs
+get a reserved strip; MOVs overlay gameplay directly. A MOV preserves its
+alpha channel, loops for the body of the clip, and contributes no audio.
+The optional ending MP4 is appended in the same pass, fitting it to the
+canvas without stretching or cropping. The free-plan mark, when required,
+goes on the resulting `campaign_` copy. Upgrading removes only that free-plan mark.
+Editors use the master without either campaign asset, so changing the picture
+does not move the logo or append another ending.

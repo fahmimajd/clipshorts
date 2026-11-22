@@ -16,6 +16,8 @@ from .models import UserVideo, Subscription, Project, User, ClipExpiryWarning
 from .auth import get_current_user_required
 
 import watermarked
+import campaign
+import layout_ranges
 
 router = APIRouter()
 
@@ -37,6 +39,8 @@ def _twins_to_archive(served, base_name, clip_index):
     * its clean twin when it is a free-plan ``wm_`` copy (an upgrade re-points
       at it: ``unmark_user_library``), unless that twin is the canonical,
       which the caller archives on its own;
+    * the unbranded twin of a campaign render, so the editor can reapply the
+      logo after changing the picture without scaling or doubling it;
     * the ``hooked_`` intermediate of a captioned hook chain, resolved on the
       clean name, or a restored project's caption restyle cannot walk back to
       the hook-only file and would silently drop or stack layers.
@@ -46,6 +50,10 @@ def _twins_to_archive(served, base_name, clip_index):
     canonical = _canonical_name(base_name, clip_index)
     if clean != served and clean != canonical:
         out.append(clean)
+    if clean != canonical and clean.startswith(campaign.PREFIX):
+        clean = clean.removeprefix(campaign.PREFIX)
+        if clean != canonical:
+            out.append(clean)
     m = _HOOK_CHAIN_RE.match(clean)
     if m and m.group(1) != canonical:
         out.append(m.group(1))
@@ -53,16 +61,20 @@ def _twins_to_archive(served, base_name, clip_index):
 
 
 def _superseded_names(prev, original_file, new_filename, base_name, clip_index):
-    """R2 objects an edit leaves behind: the previous served file and, when
-    that was a ``wm_`` copy, its clean twin. Never the pristine original (or
-    its twin), never the canonical, never the file just written."""
+    """Previous delivery copies to remove, keeping the original and current edit chains."""
     if not prev:
         return []
-    keep = {new_filename, watermarked.clean_name(new_filename),
-            original_file or "", watermarked.clean_name(original_file or ""),
-            _canonical_name(base_name, clip_index) or ""}
+    keep = {_canonical_name(base_name, clip_index)}
+    for name in (original_file, new_filename):
+        if name:
+            keep.add(name)
+            keep.update(_twins_to_archive(name, base_name, clip_index))
+    clean = watermarked.clean_name(prev)
+    previous = [prev, clean]
+    if clean.startswith(campaign.PREFIX):
+        previous.append(clean.removeprefix(campaign.PREFIX))
     out = []
-    for name in (prev, watermarked.clean_name(prev)):
+    for name in previous:
         if name and name not in keep and name not in out:
             out.append(name)
     return out
@@ -234,6 +246,11 @@ async def archive_job(user_id, job_id, clips, output_dir, attestation=None):
                     await asyncio.to_thread(storage.upload_file, clean_path, clean_key)
                 except Exception as e:
                     print(f"⚠️  R2 upload failed for {clean_key}: {e}")
+            sidecar = layout_ranges.sidecar_path(clean_path)
+            if layout_ranges.has_live_banner(layout_ranges.read(clean_path)):
+                await asyncio.to_thread(storage.upload_file, sidecar,
+                                        storage.job_key(user_id, job_id, os.path.basename(sidecar)),
+                                        "application/json")
 
         # Free plan: the served file is the wm_ copy of the final one, and the
         # clean final rides along so an upgrade can re-point at it without a
@@ -249,6 +266,11 @@ async def archive_job(user_id, job_id, clips, output_dir, attestation=None):
 
     if not uploaded:
         return
+    for name, content_type in campaign.ASSETS:
+        asset = os.path.join(output_dir, name)
+        if os.path.isfile(asset):
+            await asyncio.to_thread(storage.upload_file, asset,
+                                    storage.job_key(user_id, job_id, name), content_type)
     async with database.session() as s:
         async with s.begin():
             # Upsert per-clip history rows: re-archiving a job must repoint the

@@ -328,7 +328,7 @@ export default function ResultCard({ clip, index, jobId, durable, uploadPostKey,
     // True when the current server file already carries burned-in content.
     // Browser (Remotion) renders compose over the ORIGINAL clip, so using them
     // here would silently drop those burns — chain via server FFmpeg instead.
-    const hasServerBurns = /(^|_)(subtitled|hook|hooked)_/.test(serverVideoFile || '');
+    const hasServerBurns = /^(?:wm_)?campaign_|(^|_)(subtitled|hook|hooked)_/.test(serverVideoFile || '');
 
     // The hook currently burned into the server file (auto-hook or a manual
     // one). /api/hook REPLACES it; tracked locally so the modal stays honest

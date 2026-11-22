@@ -22,6 +22,18 @@ import json
 import os
 
 SIDECAR_SUFFIX = ".layout.json"
+LIVE_BANNER = "live_banner"
+LIVE_CAPTION_Y = 146  # Bottom anchor in the ASS canvas (PlayResY 288).
+
+
+def live_banner_slot(height):
+    """Even y bounds of the banner at the bottom of the 60% gameplay panel."""
+    seam = (height * 3 // 5) & ~1
+    return seam - max(2, (height * 86 // 1000) & ~1), seam
+
+
+def has_live_banner(ranges):
+    return any(r["layout"] == LIVE_BANNER for r in normalise(ranges))
 
 
 def sidecar_path(video_path):

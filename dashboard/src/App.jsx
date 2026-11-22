@@ -106,7 +106,10 @@ let pendingJobInMemory = null;
 
 function stashPendingJob(data) {
   const stamp = Date.now();
-  const entry = { stamp, data: { ...data, payload: typeof data?.payload === 'string' ? data.payload : null } };
+  const { campaignOutro, campaignWatermark, payload, ...options } = data;
+  const watermark = typeof campaignWatermark === 'string' ? campaignWatermark : null;
+  const canResume = !campaignOutro && !(campaignWatermark instanceof File) && typeof payload === 'string';
+  const entry = { stamp, data: { ...options, campaignWatermark: watermark, payload: canResume ? payload : null } };
   pendingJobInMemory = { stamp, data };
   try {
     localStorage.setItem(PENDING_JOB_KEY, JSON.stringify(entry));
@@ -1278,9 +1281,8 @@ function App() {
         headers['X-LLM-Model'] = customLlm.model;
         if (customLlm.apiKey) headers['X-LLM-API-Key'] = customLlm.apiKey;
       }
+      const watermarkVideo = data.campaignWatermark instanceof File ? data.campaignWatermark : null;
 
-      // Advanced generation controls: only sent when the user set them, so the
-      // default request stays byte-identical to the pre-feature one.
       const advanced = {
         target_clips: data.targetClips || null,
         clip_min_seconds: data.clipMinSeconds || null,
@@ -1297,37 +1299,34 @@ function App() {
         // The stretch picked under the cost line (seconds); absent = whole video.
         source_start: data.sourceStart ?? null,
         source_end: data.sourceEnd ?? null,
+        campaign_watermark: watermarkVideo ? null : data.campaignWatermark || null,
       };
 
+      const fields = {
+        acknowledged: !!data.acknowledged,
+        output_format: data.outputFormat || 'auto',
+        ...advanced,
+      };
       if (data.type === 'url') {
-        headers['Content-Type'] = 'application/json';
-        body = JSON.stringify({
-          url: data.payload,
-          acknowledged: !!data.acknowledged,
-          output_format: data.outputFormat || 'auto',
-          force_low_quality: forceLowQuality,
-          youtube_live_webcam: data.youtubeLiveWebcam || undefined,
-          ...Object.fromEntries(Object.entries(advanced).filter(([, v]) => v != null)),
-        });
+        fields.url = data.payload;
+        fields.force_low_quality = forceLowQuality;
+        fields.youtube_live_webcam = data.youtubeLiveWebcam;
       } else if (data.type === 'thumbnail_session') {
-        // Handover from Thumbnail Studio (issue #68): the video and transcript
-        // already live server-side, keyed by the Studio session.
-        headers['Content-Type'] = 'application/json';
-        body = JSON.stringify({
-          thumbnail_session_id: data.payload,
-          acknowledged: !!data.acknowledged,
-          output_format: data.outputFormat || 'auto',
-          ...Object.fromEntries(Object.entries(advanced).filter(([, v]) => v != null)),
-        });
-      } else {
+        fields.thumbnail_session_id = data.payload;
+      }
+      const entries = Object.entries(fields).filter(([, value]) => value != null);
+      if (data.type === 'file' || watermarkVideo || data.campaignOutro) {
         const formData = new FormData();
-        formData.append('file', data.payload);
-        formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
-        formData.append('output_format', data.outputFormat || 'auto');
-        for (const [k, v] of Object.entries(advanced)) {
-          if (v != null) formData.append(k, v);
+        if (data.type === 'file') formData.append('file', data.payload);
+        if (watermarkVideo) formData.append('campaign_watermark_video', watermarkVideo);
+        if (data.campaignOutro) formData.append('campaign_outro', data.campaignOutro);
+        for (const [key, value] of entries) {
+          formData.append(key, key === 'youtube_live_webcam' ? JSON.stringify(value) : value);
         }
         body = formData;
+      } else {
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify(Object.fromEntries(entries));
       }
 
       const res = await apiFetch('/api/process', { method: 'POST', headers, body });

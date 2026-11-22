@@ -72,10 +72,14 @@ def _graphs():
         "split": split_layout.split_filtergraph(W, H, OW, OH, (500, 450), (1400, 500)),
         "inset": camera_inset.inset_filtergraph(W, H, OW, OH, (1500, 760, 380, 280)),
         "stream": reframe_v2._stream_filtergraph(W, H, OW, OH, (0.8, 0.75, 0.2, 0.25)),
+        "stream_banner": reframe_v2._stream_filtergraph(
+            W, H, OW, OH, (0.8111, 0.6981, 0.1889, 0.2685), live_banner=True),
     }
 
 
-@pytest.mark.parametrize("name", ["general", "wide", "wide_zoom", "focus", "screencast", "split", "inset", "stream"])
+@pytest.mark.parametrize("name", [
+    "general", "wide", "wide_zoom", "focus", "screencast", "split", "inset", "stream", "stream_banner",
+])
 def test_layout_matches_ffmpeg(source, tmp_path, name):
     graph = _graphs()[name]
     ref, got = str(tmp_path / "ref.mp4"), str(tmp_path / "got.mp4")

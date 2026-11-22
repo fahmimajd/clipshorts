@@ -6,6 +6,17 @@
   `source_end` (seconds) clip and bill only that stretch.
   A JSON `youtube_live_webcam: [x, y, width, height]` selects YouTube Live
   mode and forces 9:16. The coordinates are fractions of the source frame.
+  `campaign_watermark` accepts a base64-encoded still PNG (no data URL
+  prefix), up to 512 KB and 1080 px per side, in JSON or as a multipart text
+  field. Alternatively, `campaign_watermark_video` accepts a multipart MOV
+  file up to 30 seconds, 100 MB and 1920 px per side. It loops without audio
+  until the clip ends. Both support transparency and fit the same watermark
+  area. YouTube Live places it between gameplay and webcam; other clips place
+  it at the top center. Omit both fields to skip the campaign watermark.
+  `campaign_outro` is a multipart MP4 file, up to 30 seconds, 25 MB and
+  4096 px on either side. It is appended to every final clip. Send either
+  `url` or the source `file` in the same request; for a live URL,
+  `youtube_live_webcam` is a JSON array encoded as a multipart text field.
 - `GET /api/youtube-live/preview?url=...&seconds=...`: load a preview for a
   completed YouTube livestream with chat replay. Returns a JPEG data URL in
   `image`, the VOD `duration` and the actual sampled `seconds`.

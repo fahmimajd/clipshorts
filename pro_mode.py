@@ -1008,6 +1008,8 @@ def convert(base_path, clean_name, clip, transcript, wait=0.0, api_key=None,
     whole = {"start": float(clip.get("start", 0) or 0), "end": float(clip.get("end", 0) or 0)}
     segments = recipe.get("segments") or [dict(whole)]
     ranges = clip.get("layout_ranges") or layout_ranges.read(base_path)
+    if layout_ranges.has_live_banner(ranges):
+        raise NotApplicable("Pro mode does not support the YouTube Live banner layout.")
     out_name = f"recut_{int(time.time())}_{uuid.uuid4().hex[:6]}_{clean_name}"
     out_path = os.path.join(os.path.dirname(base_path), out_name)
     words = words_for(transcript, segments)

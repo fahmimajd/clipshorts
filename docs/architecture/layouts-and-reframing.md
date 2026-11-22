@@ -168,10 +168,15 @@ width, so an explicit GENERAL override on a portrait clip cannot shrink it.
   the bottom edge it cut the forehead off.
 - **YouTube Live** (`reframe_v2.render_stream`): a manual webcam rectangle in
   source fractions replaces scene and face detection. The largest rectangular
-  gameplay crop outside that box goes on top, the webcam below. Both are
-  fitted without stretching and touch at the midpoint; any vertical padding
-  goes above gameplay or below the webcam. The `SPLIT` sidecar keeps captions
-  on the seam. A recut from the source uses the saved box unless the editor
+  gameplay crop outside that box goes on top and fits without stretching.
+  The webcam fills the bottom panel via a centered crop. The dashboard
+  starts with a movable webcam box that matches the panel's aspect ratio.
+  With a campaign watermark, gameplay takes the
+  top 60% and the webcam takes the bottom 40%. A PNG gets a reserved banner
+  slot; a MOV overlays the bottom of the gameplay without reserving a strip.
+  The `live_banner` sidecar keeps captions above both. Without either
+  watermark, the layout stays 50/50 `SPLIT` with seam captions.
+  A recut from the source uses the saved box unless the editor
   overrides the framing.
 - **ALTERNATE** (`active_speaker.py`, `SPEAKER_SIGNAL=1` + `SPEAKER_CUT=1`):
   hard cuts to whoever is talking, rendered through the TRACK path as a

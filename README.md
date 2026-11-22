@@ -105,6 +105,8 @@ Add OpenShorts to Claude or ChatGPT with one URL and ask for clips in plain lang
 - **Captions**: faster-whisper (or Parakeet on GPU) with word-level timestamps, several caption styles, burned into the clip
 - **Clip editor**: word-level cuts, extra segments, framing changes and fast re-renders
 - **Hook overlays**: an opening line written from what is said in the clip, editable in text, style, font and position
+- **Campaign watermark**: upload a still PNG (up to 512 KB and 1080 px per side) or a looping, muted MOV (up to 30 seconds, 100 MB and 1920 px per side). Both fit the same watermark area automatically and support transparency. YouTube Live puts it between the 60% gameplay and 40% webcam panels, with captions above. Other clips place it at the top center. Leave the field empty to skip the campaign watermark.
+- **Ending template**: optionally upload an MP4 before starting a project (up to 30 seconds and 25 MB). It plays after each clip, with its audio and aspect ratio preserved.
 - **AI Voice Dubbing**: ElevenLabs, 30+ languages with voice cloning (bring your own ElevenLabs key, on the Cloud too)
 - **AI Video Effects**: Gemini-generated FFmpeg filters
 
@@ -245,7 +247,7 @@ Navigate to **`http://localhost:5175/#app`**. On Windows, if the dashboard still
 3. In **Gallery**, open or download finished clips from previous renders, newest first. It shows files still in `output/`, including after a restart. Download anything you want to keep before automatic cleanup (`JOB_RETENTION_SECONDS`, 24 hours by default).
    To free disk space, select **Delete render** next to a finished render and confirm. This permanently removes the render's clips, edits, and the copy of its source kept by OpenShorts. Download anything you want to keep first.
 
-For a completed landscape gaming stream, choose **YouTube Live**, paste the replay link, select **Load frame**, and draw a box around the webcam before generating clips. Use a frame where the entire camera overlay is visible and stays in the same position throughout the stream. OpenShorts clips the busiest replay-chat moments and renders gameplay above the webcam in 9:16. The replay needs public live chat; use **Video URL** for a regular video or a replay without chat. Self-hosted YouTube Live clipping does not require an AI provider.
+For a completed landscape gaming stream, choose **YouTube Live**, paste the replay link, and select **Load frame**. Drag the pre-sized box onto the webcam and use **Webcam size** to make it larger or smaller. The box keeps the shape of the bottom panel, so the webcam fills it without side bars. Pick a frame where the webcam is visible and stays in the same position throughout the replay. OpenShorts clips the busiest replay-chat moments and renders gameplay above the webcam in 9:16. The replay needs public live chat; use **Video URL** for a regular video or a replay without chat. Self-hosted YouTube Live clipping does not require an AI provider.
 
 The **active for new clips** summary in Settings shows the transcript provider, model, and configuration source. A saved browser override takes precedence over the server default. Unsaved edits do not change the summary.
 

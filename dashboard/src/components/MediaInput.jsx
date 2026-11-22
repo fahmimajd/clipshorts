@@ -23,6 +23,9 @@ const SOURCE_MODES = [
 // says so the moment the file is picked (a 27 s upload used to end in a bare
 // "That run failed").
 const MIN_SOURCE_SECONDS = 45;
+const MAX_WATERMARK_BYTES = 512 * 1024;
+const MAX_MOTION_WATERMARK_BYTES = 100 * 1024 * 1024;
+const MAX_CAMPAIGN_VIDEO_BYTES = 25 * 1024 * 1024;
 
 // Duration of a local video file in seconds, or null when the browser cannot
 // read it (unsupported codec): then the server stays the judge.
@@ -39,6 +42,40 @@ const readVideoDuration = (file) => new Promise((resolve) => {
     } catch { resolve(null); }
 });
 
+function CampaignFileInput({ id, label, hint, accept, error, status, selected, removeLabel, onSelect }) {
+    const inputRef = useRef(null);
+    return (
+        <div className="min-w-0">
+            <label htmlFor={id} className="block text-sm font-medium text-ink">
+                {label} <span className="font-normal text-muted">(optional)</span>
+            </label>
+            <p id={`${id}-hint`} className="mt-1 text-xs text-muted">{hint}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                    id={id}
+                    ref={inputRef}
+                    type="file"
+                    accept={accept}
+                    aria-describedby={`${id}-hint${error ? ` ${id}-error` : ''}`}
+                    aria-invalid={!!error}
+                    onChange={(e) => onSelect(e.currentTarget)}
+                    className="block min-h-11 w-full min-w-0 max-w-xs cursor-pointer rounded-input text-sm text-ink2 file:mr-3 file:min-h-11 file:cursor-pointer file:rounded-input file:border-0 file:bg-paper3 file:px-3 file:text-ink hover:file:bg-paper active:file:bg-paper2"
+                />
+                {(selected || status || error) && (
+                    <button type="button" className="btn-quiet min-h-11" onClick={() => {
+                        const input = inputRef.current;
+                        input.value = '';
+                        onSelect(input);
+                        input.focus();
+                    }}>{removeLabel}</button>
+                )}
+            </div>
+            {status && <p role="status" className="mt-1 text-xs text-muted">{status}</p>}
+            {error && <p id={`${id}-error`} role="alert" className="mt-1 text-xs text-danger">{error}</p>}
+        </div>
+    );
+}
+
 export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
     const { plan } = useAuth();
     const [youtubeUrlEnabled, setYoutubeUrlEnabled] = useState(true);
@@ -50,6 +87,12 @@ export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
     const [file, setFile] = useState(null);
     const [fileSeconds, setFileSeconds] = useState(null);
     const fileTooShort = fileSeconds != null && fileSeconds < MIN_SOURCE_SECONDS;
+    const [watermark, setWatermark] = useState(null);
+    const [watermarkError, setWatermarkError] = useState('');
+    const [readingWatermark, setReadingWatermark] = useState(false);
+    const [outro, setOutro] = useState(null);
+    const [outroError, setOutroError] = useState('');
+    const campaignInputBlocked = readingWatermark || !!watermarkError || !!outroError;
     const [acknowledged, setAcknowledged] = useState(false);
     // {start, end} in seconds when the user picked a stretch under the cost line.
     const [range, setRange] = useState(null);
@@ -136,9 +179,43 @@ export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
         setYoutubeLiveWebcam(null);
     };
 
+    const selectWatermark = (input) => {
+        const asset = input.files?.[0];
+        setWatermark(null);
+        setWatermarkError('');
+        setReadingWatermark(false);
+        if (!asset) return;
+        if (/\.mov$/i.test(asset.name)) {
+            if (!asset.size || asset.size > MAX_MOTION_WATERMARK_BYTES) setWatermarkError('Choose a MOV up to 100 MB.');
+            else setWatermark(asset);
+            return;
+        }
+        if (!asset.size || asset.size > MAX_WATERMARK_BYTES ||
+            (asset.type ? asset.type !== 'image/png' : !/\.png$/i.test(asset.name))) {
+            setWatermarkError('Choose a PNG up to 512 KB or a MOV up to 100 MB.');
+            return;
+        }
+        setReadingWatermark(true);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            if (input.files?.[0] !== asset) return;
+            setReadingWatermark(false);
+            if (reader.result) setWatermark(reader.result.split(',')[1]);
+            else setWatermarkError('Could not read this PNG. Choose it again or remove it.');
+        };
+        reader.readAsDataURL(asset);
+    };
+
+    const selectOutro = (input) => {
+        const video = input.files?.[0];
+        const invalid = video && (!/\.mp4$/i.test(video.name) || !video.size || video.size > MAX_CAMPAIGN_VIDEO_BYTES);
+        setOutroError(invalid ? 'Choose an MP4 up to 25 MB.' : '');
+        setOutro(invalid ? null : video || null);
+    };
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (isProcessing || !acknowledged || (isYouTubeLive && !youtubeLiveWebcam)) return;
+        if (isProcessing || campaignInputBlocked || !acknowledged || (isYouTubeLive && !youtubeLiveWebcam)) return;
         const advanced = {
             targetClips: targetClips || null,
             clipMinSeconds: clipMinSeconds || null,
@@ -148,6 +225,8 @@ export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
             layout: isYouTubeLive ? 'auto' : layout,
             sourceStart: range ? Math.round(range.start) : null,
             sourceEnd: range ? Math.round(range.end) : null,
+            campaignWatermark: watermark,
+            campaignOutro: outro,
         };
         try {
             localStorage.setItem('os_auto_hook', autoHook ? '1' : '0');
@@ -214,7 +293,8 @@ export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
                         <p id="clip-live-url-hint" className="text-xs leading-relaxed text-muted">
                             Use a finished stream with chat replay. Peaks in unique chatters help pick clips.
                         </p>
-                        <YouTubeLiveSetup key={liveUrl} url={liveUrl} onWebcamChange={setYoutubeLiveWebcam} onSignIn={onSignIn} />
+                        <YouTubeLiveSetup key={liveUrl} url={liveUrl} hasWatermark={!!watermark}
+                            onWebcamChange={setYoutubeLiveWebcam} onSignIn={onSignIn} />
                     </div>
                 ) : mode === 'url' ? (
                     <div className="space-y-4" data-tutorial="drop-zone">
@@ -321,7 +401,9 @@ export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
                     <h2 id="clip-format-heading" className="text-sm font-semibold text-ink mb-3 xl:mb-4">output format</h2>
                     {isYouTubeLive ? (
                         <p className="text-sm leading-relaxed text-ink2">
-                            <span className="font-mono tabular-nums text-ink">9:16</span> vertical. Gameplay goes on top, with the selected webcam enlarged below.
+                            <span className="font-mono tabular-nums text-ink">9:16</span> vertical. {watermark
+                                ? '60% gameplay, 40% webcam, with the banner between them and captions above it.'
+                                : 'Gameplay goes on top, with the selected webcam enlarged below.'}
                         </p>
                     ) : <div role="group" aria-labelledby="clip-format-heading" className="grid grid-cols-3 gap-2">
                         {[
@@ -460,6 +542,20 @@ export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
                     </div>
                 </div>
 
+            <div className="grid gap-4 border-t border-rule px-4 py-3 sm:px-6 md:grid-cols-2">
+                <CampaignFileInput
+                    id="clip-campaign-watermark" label="campaign watermark" accept="image/png,.png,video/quicktime,.mov"
+                    hint={`${isYouTubeLive ? 'Between gameplay and webcam.' : 'Top center of each clip.'} PNG logos and MOV bumpers fit the same watermark area. PNG: 512 KB, 1080 px per side. Muted, looping MOV: 100 MB, 30 seconds, 1920 px per side.`}
+                    error={watermarkError} status={readingWatermark ? 'Reading PNG…' : ''}
+                    selected={!!watermark} removeLabel="remove watermark" onSelect={selectWatermark}
+                />
+                <CampaignFileInput
+                    id="clip-campaign-outro" label="ending template" accept="video/mp4,.mp4"
+                    hint="An MP4 appended to each clip. Up to 30 seconds and 25 MB."
+                    error={outroError} selected={!!outro} removeLabel="remove ending template" onSelect={selectOutro}
+                />
+            </div>
+
             <div className="border-t border-rule bg-paper/50 rounded-b-card p-4 sm:px-6 sm:flex sm:items-center sm:justify-between sm:gap-6">
                 <label className="flex min-h-11 items-start gap-2.5 text-left text-xs leading-relaxed text-muted cursor-pointer select-none">
                     <input
@@ -476,7 +572,7 @@ export default function MediaInput({ onProcess, isProcessing, onSignIn }) {
                 <button
                     type="submit"
                     data-tutorial="generate"
-                    disabled={isProcessing || !acknowledged || (isYouTubeLive && !youtubeLiveWebcam) || (mode === 'url' && !url) || (mode === 'file' && (!file || fileTooShort))}
+                    disabled={isProcessing || campaignInputBlocked || !acknowledged || (isYouTubeLive && !youtubeLiveWebcam) || (mode === 'url' && !url) || (mode === 'file' && (!file || fileTooShort))}
                     className="w-full min-h-11 btn-primary mt-3 sm:mt-0 sm:w-auto sm:shrink-0"
                 >
                     {isProcessing ? (

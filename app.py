@@ -36,6 +36,7 @@ from s3_uploader import upload_job_artifacts, list_all_clips, upload_actor_to_s3
 import recut
 import layout_ranges
 import watermarked
+import campaign
 import media_auth
 import remote_worker
 import yt_account
@@ -1514,6 +1515,14 @@ def _canonical_clip_file(output_dir, base_name, index):
     clips silently lose their captions (or their recut) on a redeploy.
     """
     clean = f"{base_name}_clip_{index + 1}.mp4"
+    if campaign.has_assets(output_dir):
+        prefix = campaign.PREFIX
+        if watermarked.job_is_marked(output_dir):
+            prefix = watermarked.PREFIX + prefix
+        candidates = glob.glob(os.path.join(output_dir, f"{prefix}*{glob.escape(clean)}"))
+        if candidates:
+            return os.path.basename(max(candidates, key=os.path.getmtime))
+        return prefix + clean  # A master by itself is not a successful branded render.
     try:
         # subtitled_*_{clean} also matches subtitled_<ts>_recut_<ts>_{clean}
         # and subtitled_<ts>_hooked_<ts>_{clean}, i.e. captioned recuts and
@@ -1595,6 +1604,15 @@ def _strip_watermark_copy(output_dir, filename):
     return filename
 
 
+def _strip_delivery_copies(output_dir, filename):
+    filename = _strip_watermark_copy(output_dir, filename)
+    if filename.startswith(campaign.PREFIX) and campaign.has_assets(output_dir):
+        base = filename.removeprefix(campaign.PREFIX)
+        if os.path.isfile(os.path.join(output_dir, base)):
+            return base
+    return filename
+
+
 def _strip_burned_captions(output_dir, filename, materialize=True):
     """Walk ``subtitled_<ts>_`` prefixes back to the file without burned captions.
 
@@ -1606,7 +1624,7 @@ def _strip_burned_captions(output_dir, filename, materialize=True):
     it). Encodes: call it off the event loop.
     """
     import hooks
-    filename = _strip_watermark_copy(output_dir, filename)
+    filename = _strip_delivery_copies(output_dir, filename)
     while True:
         m = re.match(r'^subtitled_\d+_(.+)$', filename)
         if not m:
@@ -1625,7 +1643,7 @@ def _strip_burned_hook(output_dir, filename):
     without a burned hook. Same fail-safe contract as _strip_burned_captions:
     the name is returned unchanged when there is nothing to strip or the
     underlying file is gone."""
-    filename = _strip_watermark_copy(output_dir, filename)
+    filename = _strip_delivery_copies(output_dir, filename)
     while True:
         m = re.match(r'^(?:hooked_\d+_|hook_)(.+)$', filename)
         if not m or not os.path.exists(os.path.join(output_dir, m.group(1))):
@@ -1633,19 +1651,19 @@ def _strip_burned_hook(output_dir, filename):
         filename = m.group(1)
 
 
-async def _deliver(request, job_id, filename):
-    """The name to serve for a freshly derived clip file: the file itself, or
-    on the free plan its ``wm_`` copy (``main.mark_delivery``).
-
-    Decided from the caller's plan right now, not from the job's flag: the
-    flag is lost on a restart/restore, and a user who upgraded mid-session
-    must get clean files from their next edit on. Self-host never marks."""
+async def _deliver(request, job_id, filename, ranges=None):
+    """Serve a derivative with campaign assets, then the free-plan mark if needed."""
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    if campaign.has_assets(output_dir):
+        branded = await asyncio.to_thread(
+            campaign.render, os.path.join(output_dir, filename),
+            live_banner=layout_ranges.has_live_banner(ranges))
+        filename = os.path.basename(branded)
     if not BILLING_ENABLED:
         return filename
     user = await _user_from_request(request)
     if user is None or user.plan != "free":
         return filename
-    output_dir = os.path.join(OUTPUT_DIR, job_id)
     # Only jobs the pipeline rendered under this scheme (marker file). A job
     # from before it has the mark burned into its canonical, so every
     # derivative already carries one and a copy would stack a second.
@@ -1746,7 +1764,11 @@ def _reapply_captions(job_id, clip_index, video_path):
                                      clip['caption_style'],
                                      clip.get('layout_ranges'))
         import main as _main
-        return _main.auto_caption_clip(video_path, transcript, start, end)
+        ranges = clip.get('layout_ranges') or layout_ranges.read(video_path)
+        return _main.auto_caption_clip(
+            video_path, transcript, start, end,
+            split_ranges=layout_ranges.split_ranges(ranges),
+            live_banner=layout_ranges.has_live_banner(ranges))
     except Exception as e:
         print(f"⚠️  Could not re-apply captions to {video_path}: {e}")
         return None
@@ -1781,7 +1803,7 @@ def _words_transcript(words, language="en"):
 
 
 def _burn_caption_style(video_path, out_path, sub_path, transcript, start, end,
-                        style, split_ranges=None):
+                        style, split_ranges=None, live_banner=False):
     """Generate the caption file for ``style`` (CAPTION_STYLE_FIELDS, a
     missing field takes the SubtitleRequest default) and burn it onto
     ``video_path``. Returns False when no words fall in the range."""
@@ -1793,7 +1815,7 @@ def _burn_caption_style(video_path, out_path, sub_path, transcript, start, end,
                     if s["max_duration"] is not None else None)
     if s["style"] == "karaoke":
         opts = dict(
-            split_ranges=split_ranges,
+            split_ranges=split_ranges, live_banner=live_banner,
             alignment=s["position"], fontsize=s["font_size"],
             font_name=s["font_name"], font_color=s["font_color"],
             border_color=s["border_color"], border_width=s["border_width"],
@@ -1815,7 +1837,7 @@ def _burn_caption_style(video_path, out_path, sub_path, transcript, start, end,
                    alignment=s["position"], fontsize=s["font_size"],
                    font_name=s["font_name"], font_color=s["font_color"],
                    border_color=s["border_color"], border_width=s["border_width"],
-                   bg_color=s["bg_color"], bg_opacity=s["bg_opacity"])
+                   bg_color=s["bg_color"], bg_opacity=s["bg_opacity"], live_banner=live_banner)
     return True
 
 
@@ -1834,10 +1856,11 @@ def _restyle_captions(video_path, transcript, start, end, style,
         f"subs_restyle_{generation_id}_{uuid.uuid4().hex[:8]}.{'ass' if karaoke else 'srt'}")
     out_path = os.path.join(
         output_dir, f"subtitled_{generation_id}_{os.path.basename(video_path)}")
-    seams = layout_ranges.split_ranges(layout or layout_ranges.read(video_path))
+    ranges = layout or layout_ranges.read(video_path)
     try:
         if not _burn_caption_style(video_path, out_path, sub_path, transcript,
-                                   start, end, style, seams):
+                                   start, end, style, layout_ranges.split_ranges(ranges),
+                                   layout_ranges.has_live_banner(ranges)):
             return None
         return out_path
     except Exception as e:
@@ -5256,6 +5279,8 @@ def _remote_eligible(job_id, priority) -> bool:
     key = job['env'].get("GEMINI_API_KEY")
     if not key or key != _server_gemini_key():
         return False
+    if campaign.has_assets(os.path.join(OUTPUT_DIR, job_id)):
+        return False
     return os.path.exists(_manifest_path(job_id))
 
 
@@ -6117,12 +6142,15 @@ async def process_endpoint(
     max_minutes: Optional[str] = Form(None),
     source_start: Optional[str] = Form(None),
     source_end: Optional[str] = Form(None),
+    campaign_watermark_image: Optional[str] = Form(None, alias="campaign_watermark"),
+    campaign_watermark_video: Optional[UploadFile] = File(None),
+    campaign_outro: Optional[UploadFile] = File(None),
+    youtube_live_webcam: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
     force_low = str(force_low_quality).lower() in ("1", "true", "yes")
-    youtube_live_webcam = None
 
     # Handle JSON body manually for URL payload
     content_type = request.headers.get("content-type", "")
@@ -6147,6 +6175,16 @@ async def process_endpoint(
         source_start = body.get("source_start")
         source_end = body.get("source_end")
         youtube_live_webcam = body.get("youtube_live_webcam")
+        campaign_watermark_image = body.get("campaign_watermark")
+        if body.get("campaign_watermark_video") is not None:
+            raise HTTPException(status_code=400, detail="Upload campaign_watermark_video as a multipart MOV file.")
+        if body.get("campaign_outro") is not None:
+            raise HTTPException(status_code=400, detail="Upload campaign_outro as a multipart MP4 file.")
+    elif youtube_live_webcam is not None:
+        try:
+            youtube_live_webcam = json.loads(youtube_live_webcam)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="youtube_live_webcam must be a JSON array.") from error
 
     # Normalize output format (auto = keep pipeline default).
     if output_format not in ("vertical", "horizontal", "square"):
@@ -6217,6 +6255,15 @@ async def process_endpoint(
     if not ack_flag:
         raise HTTPException(status_code=400, detail="You must confirm you own the content or have rights to process it.")
 
+    if campaign_watermark_image is not None and campaign_watermark_video is not None:
+        raise HTTPException(status_code=400, detail="Choose one campaign watermark: PNG or MOV.")
+    logo_png = None
+    if campaign_watermark_image is not None:
+        try:
+            logo_png = await asyncio.to_thread(campaign.decode_png, campaign_watermark_image)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     if url and DISABLE_YOUTUBE_URL:
         raise HTTPException(status_code=403, detail="YouTube URL ingest is disabled on this deployment. Please upload a file you own.")
 
@@ -6245,6 +6292,20 @@ async def process_endpoint(
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
     _begin_job_dir(job_id)  # the sweeps keep its dir and source until it is in `jobs`
     os.makedirs(job_output_dir, exist_ok=True)
+    try:
+        if logo_png is not None:
+            with open(os.path.join(job_output_dir, campaign.LOGO_ASSET), "wb") as target:
+                target.write(logo_png)
+        for upload, name in ((campaign_watermark_video, campaign.MOTION_LOGO_ASSET),
+                             (campaign_outro, campaign.OUTRO_ASSET)):
+            if upload is not None:
+                try:
+                    await asyncio.to_thread(campaign.save_video_asset, upload.file, os.path.join(job_output_dir, name))
+                except ValueError as error:
+                    raise HTTPException(status_code=400, detail=str(error)) from error
+    except BaseException:
+        _discard_rejected_source(None, job_output_dir)
+        raise
 
     # Prepare Command
     # sys.executable, not "python": bare "python" resolves against PATH, which
@@ -7269,14 +7330,14 @@ async def _restore_job_files(job_id: str, proj, user_id: str) -> bool:
             data = json.load(f)
         base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
         clips = data.get('shorts', [])
+        if any(watermarked.is_marked(c.get("server_file") or "")
+               for c in (proj.state or {}).get("clips", [])):
+            watermarked.mark_job(job_dir)
         for i, clip in enumerate(clips):
             if not clip.get('video_url'):
                 clip['video_url'] = (
                     f"/videos/{job_id}/"
                     f"{_canonical_clip_file(job_dir, base_name, i)}")
-        if any(watermarked.is_marked(c.get("server_file") or "")
-               for c in (proj.state or {}).get("clips", [])):
-            watermarked.mark_job(job_dir)
         jobs[job_id] = {
             'status': 'completed',
             'logs': _TimedLog(["♻️ Project restored from your library."]),
@@ -7408,8 +7469,8 @@ async def edit_clip(
         # pass stacks a second layer over them (see _reapply_captions).
         clean_name = await asyncio.to_thread(
             _strip_burned_captions, os.path.join(OUTPUT_DIR, req.job_id), filename)
-        had_captions = clean_name != filename
-        if had_captions:
+        had_captions = clean_name != _strip_delivery_copies(os.path.dirname(input_path), filename)
+        if clean_name != filename:
             filename = clean_name
             input_path = os.path.join(OUTPUT_DIR, req.job_id, clean_name)
 
@@ -7505,7 +7566,8 @@ async def edit_clip(
             if recap:
                 edited_filename = os.path.basename(recap)
 
-        edited_filename = await _deliver(request, req.job_id, edited_filename)
+        edited_filename = await _deliver(request, req.job_id, edited_filename,
+                                         job['result']['clips'][req.clip_index].get('layout_ranges'))
         new_video_url = f"/videos/{req.job_id}/{edited_filename}"
 
         # Persist the new current file like /api/subtitle does: in-memory job
@@ -7926,7 +7988,8 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
                         if req.reapply_captions else None)
         loop = asyncio.get_event_loop()
         served_name, _clean_recut_name = await loop.run_in_executor(None, run_recut)
-        served_name = await _deliver(request, req.job_id, served_name)
+        new_ranges = layout_ranges.read(os.path.join(output_dir, _clean_recut_name))
+        served_name = await _deliver(request, req.job_id, served_name, new_ranges)
 
         new_video_url = f"/videos/{req.job_id}/{served_name}"
         new_recipe = {"v": 1, "segments": segments,
@@ -7941,10 +8004,7 @@ async def _rerender_locked(req: RerenderRequest, request: Request, job):
 
         updates = {'video_url': new_video_url, 'start': new_start,
                    'end': new_end, 'recipe': new_recipe,
-                   # The stacked stretches of THIS render (empty on the fast
-                   # path, which never reframes): captions follow them.
-                   'layout_ranges': layout_ranges.read(
-                       os.path.join(output_dir, _clean_recut_name))}
+                   'layout_ranges': new_ranges}
         # Per-scene manual framing is keyed by scene indices of a specific cut;
         # this render neither applied it nor can it survive a changed cut, so
         # clear it rather than let /scenes serve stale overrides against the
@@ -8104,7 +8164,7 @@ async def _set_clip_mode_locked(req: ClipModeRequest, request: Request, job):
     # Walk the layers back to the clean file, noting which ones to put back.
     uncaptioned = await asyncio.to_thread(
         _strip_burned_captions, output_dir, served, False)
-    had_captions = uncaptioned != _strip_watermark_copy(output_dir, served)
+    had_captions = uncaptioned != _strip_delivery_copies(output_dir, served)
     base = _strip_burned_hook(output_dir, uncaptioned)
     had_hook = base != uncaptioned and bool((clip.get('auto_hook') or {}).get('text'))
     loop = asyncio.get_event_loop()
@@ -8148,7 +8208,7 @@ async def _set_clip_mode_locked(req: ClipModeRequest, request: Request, job):
                     detail="Pro mode is busy right now. Try again in a minute.")
             if isinstance(e, pro_mode.NotApplicable):
                 raise HTTPException(status_code=400,
-                                    detail="Pro mode needs a vertical clip.")
+                                    detail=str(e) or "Pro mode needs a vertical clip.")
             print(f"❌ Pro mode error: {e}")
             raise HTTPException(status_code=500, detail="Pro mode could not render this clip.")
         # Going back reuses the file served today when nothing on it changed.
@@ -8203,7 +8263,7 @@ async def _set_clip_mode_locked(req: ClipModeRequest, request: Request, job):
             return name
 
         final = reuse or await loop.run_in_executor(None, layer)
-        final = await _deliver(request, req.job_id, final)
+        final = await _deliver(request, req.job_id, final, clip.get('layout_ranges'))
         clip['video_url'] = f"/videos/{req.job_id}/{final}"
         write_json_atomic(json_files[0], data, indent=2)
         mem_clips = (job.get('result') or {}).get('clips') or []
@@ -8535,7 +8595,8 @@ async def _reframe_locked(req: ReframeRequest, request: Request, job, overrides)
     try:
         loop = asyncio.get_event_loop()
         served_name, _clean = await loop.run_in_executor(None, run)
-        served_name = await _deliver(request, req.job_id, served_name)
+        new_ranges = layout_ranges.read(os.path.join(output_dir, _clean))
+        served_name = await _deliver(request, req.job_id, served_name, new_ranges)
 
         new_video_url = f"/videos/{req.job_id}/{served_name}"
         new_recipe = {"v": 1, "segments": segments,
@@ -8546,7 +8607,7 @@ async def _reframe_locked(req: ReframeRequest, request: Request, job, overrides)
             'video_url': new_video_url,
             'recipe': new_recipe,
             'crop_overrides': {str(k): v for k, v in overrides.items()},
-            'layout_ranges': layout_ranges.read(os.path.join(output_dir, _clean)),
+            'layout_ranges': new_ranges,
         }
         updates.update(_leaves_pro_mode(clip))
         clip.update(updates)
@@ -8891,11 +8952,12 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
     # Stacked (SPLIT) stretches put their captions on the seam. The metadata
     # copy is authoritative; the sidecar covers clips rendered before it was
     # recorded there.
-    seam_ranges = layout_ranges.split_ranges(
-        clip_data.get('layout_ranges') or layout_ranges.read(input_path))
+    ranges = clip_data.get('layout_ranges') or layout_ranges.read(input_path)
+    seam_ranges = layout_ranges.split_ranges(ranges)
+    live_banner = layout_ranges.has_live_banner(ranges)
     caption_style = {k: getattr(req, k) for k in CAPTION_STYLE_FIELDS}
     karaoke_opts = dict(
-        split_ranges=seam_ranges,
+        split_ranges=seam_ranges, live_banner=live_banner,
         alignment=req.position, fontsize=req.font_size, font_name=req.font_name,
         font_color=req.font_color, border_color=req.border_color,
         border_width=req.border_width, highlight_color=req.highlight_color,
@@ -8958,14 +9020,14 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
                                alignment=req.position, fontsize=req.font_size,
                                font_name=req.font_name, font_color=req.font_color,
                                border_color=req.border_color, border_width=req.border_width,
-                               bg_color=req.bg_color, bg_opacity=req.bg_opacity)
+                               bg_color=req.bg_color, bg_opacity=req.bg_opacity, live_banner=live_banner)
             await loop.run_in_executor(None, run_burn)
         else:
             # Same code path the hook / edit / recut re-burn uses, so the look
             # recorded below is the look that was burned here.
             success = await asyncio.get_event_loop().run_in_executor(
                 None, _burn_caption_style, input_path, output_path, srt_path,
-                sub_transcript, sub_start, sub_end, caption_style, seam_ranges)
+                sub_transcript, sub_start, sub_end, caption_style, seam_ranges, live_banner)
             if not success:
                 raise HTTPException(status_code=400, detail="No words found for this clip range.")
         
@@ -8978,7 +9040,7 @@ async def add_subtitles(req: SubtitleRequest, request: Request):
     if reservation_id:
         await _metering.commit_reservation(reservation_id)
 
-    output_filename = await _deliver(request, req.job_id, output_filename)
+    output_filename = await _deliver(request, req.job_id, output_filename, ranges)
 
     # 3. Update Result and Metadata
     # Update InMemory Jobs
@@ -9061,7 +9123,7 @@ async def remove_subtitles(req: RemoveSubtitlesRequest, request: Request):
 
     # Free plan: the un-captioned file is served through its wm_ copy, which
     # is reused when the clip shipped that way (no encode).
-    filename = await _deliver(request, req.job_id, filename)
+    filename = await _deliver(request, req.job_id, filename, clips[req.clip_index].get('layout_ranges'))
     new_url = f"/videos/{req.job_id}/{filename}"
     if req.clip_index < len(job.get('result', {}).get('clips', [])):
         job['result']['clips'][req.clip_index]['video_url'] = new_url
@@ -9136,7 +9198,7 @@ async def add_hook(req: HookRequest, request: Request):
     # too: a new hook REPLACES the burned one (auto-hook or a previous manual
     # one) instead of stacking on top of it.
     clean_name = _strip_burned_captions(output_dir, filename, materialize=False)
-    had_captions = clean_name != filename
+    had_captions = clean_name != _strip_delivery_copies(output_dir, filename)
     clean_name = _strip_burned_hook(output_dir, clean_name)
     filename = clean_name
     input_path = os.path.join(output_dir, clean_name)
@@ -9188,7 +9250,7 @@ async def add_hook(req: HookRequest, request: Request):
         if recap:
             output_filename = os.path.basename(recap)
 
-    output_filename = await _deliver(request, req.job_id, output_filename)
+    output_filename = await _deliver(request, req.job_id, output_filename, clip_data.get('layout_ranges'))
 
     # Record the burned hook so the editor knows what the clip carries (the
     # auto-hook pipeline writes the same key).
@@ -9279,6 +9341,8 @@ async def translate_clip(
         if not filename:
              base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
              filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
+    if campaign.has_assets(output_dir):
+        filename = _strip_delivery_copies(output_dir, filename)
 
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):
@@ -9314,7 +9378,7 @@ async def translate_clip(
     await loop.run_in_executor(
         None, lambda: mark_ai_generated(output_path, "AI voice dubbing"))
 
-    output_filename = await _deliver(request, req.job_id, output_filename)
+    output_filename = await _deliver(request, req.job_id, output_filename, clip_data.get('layout_ranges'))
 
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):

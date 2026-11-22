@@ -6,6 +6,7 @@ import sys
 from ffmpeg_utils import (video_encode_args, escape_filter_value, QUALITY,
                           METADATA_SCRUB, finished_before_crash)
 import gpu_decode
+from layout_ranges import LIVE_CAPTION_Y
 
 
 _STDIO_CONFIGURED = False
@@ -452,7 +453,7 @@ def generate_ass(transcript, clip_start, clip_end, output_path,
                  highlight_color="#FFD700", bg_color="#000000", bg_opacity=0.0,
                  effect="none", base_opacity=1.0, uppercase=False,
                  margin_v=SAFE_MARGIN_V, split_ranges=None,
-                 reveal=False, shadow=0):
+                 reveal=False, shadow=0, live_banner=False):
     """
     Generates a karaoke-style ASS file: each block is shown like the SRT path,
     but the currently spoken word is rendered in highlight_color (modern
@@ -490,7 +491,11 @@ def generate_ass(transcript, clip_start, clip_end, output_path,
     # this: SRT burns carry one alignment for the whole file.
     seam_ranges = [(float(a), float(b)) for a, b in (split_ranges or [])]
 
+    banner_anchor = f"{{\\an2\\pos(81,{LIVE_CAPTION_Y})}}" if live_banner else ""
+
     def seam_prefix(t):
+        if banner_anchor:
+            return banner_anchor
         return "{\\an5}" if any(a <= t < b for a, b in seam_ranges) else ""
 
     safe_font = _sanitize_font_name(font_name)
@@ -566,10 +571,12 @@ def generate_ass(transcript, clip_start, clip_end, output_path,
             f"{ass_alignment},10,10,{int(_clamp_number(margin_v, 0, 200, SAFE_MARGIN_V))},1\n"
         )
 
+    canvas_width = "PlayResX: 162\n" if live_banner else ""
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
         "PlayResY: 288\n"
+        f"{canvas_width}"
         # Measured blocks never need wrapping, so it is switched off for them:
         # a rounding difference must not bring the two-line jump back.
         f"WrapStyle: {2 if fits else 0}\n"
@@ -692,7 +699,7 @@ def _sanitize_font_name(name):
 def subtitles_filter(srt_path, alignment=2, fontsize=16,
                      font_name="Verdana", font_color="#FFFFFF",
                      border_color="#000000", border_width=2,
-                     bg_color="#000000", bg_opacity=0.0):
+                     bg_color="#000000", bg_opacity=0.0, *, live_banner=False):
     """The -vf string burn_subtitles uses (also fed to hooks.add_hook_to_video)."""
     # Position mapping
     ass_alignment = 2
@@ -703,6 +710,9 @@ def subtitles_filter(srt_path, alignment=2, fontsize=16,
         ass_alignment = 10
     elif align_lower == 'bottom':
         ass_alignment = 2
+    margin = SAFE_MARGIN_V
+    if live_banner:
+        ass_alignment, margin = 2, 288 - LIVE_CAPTION_Y
 
     # Font size scaling for ASS virtual resolution (PlayResY=288 default)
     # For vertical 1080x1920 video, we need larger text for readability
@@ -743,7 +753,7 @@ def subtitles_filter(srt_path, alignment=2, fontsize=16,
         f"BorderStyle={border_style},"
         f"Outline={outline_width},"
         f"Shadow=0,"
-        f"MarginV={SAFE_MARGIN_V},"
+        f"MarginV={margin},"
         f"Bold=1"
     )
 
@@ -783,7 +793,7 @@ def _video_size(path):
 def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
-                   bg_color="#000000", bg_opacity=0.0, mark=None):
+                   bg_color="#000000", bg_opacity=0.0, mark=None, *, live_banner=False):
     """
     Burns subtitles into the video using FFmpeg.
     Supports two modes:
@@ -798,7 +808,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     vf = subtitles_filter(srt_path, alignment=alignment, fontsize=fontsize,
                           font_name=font_name, font_color=font_color,
                           border_color=border_color, border_width=border_width,
-                          bg_color=bg_color, bg_opacity=bg_opacity)
+                          bg_color=bg_color, bg_opacity=bg_opacity, live_banner=live_banner)
 
     tail = ['-c:a', 'copy', *video_encode_args(QUALITY), *METADATA_SCRUB,
             '-movflags', '+faststart']
