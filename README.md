@@ -34,7 +34,7 @@ Two people on camera? OpenShorts stacks them instead of shrinking the wide shot,
 | **Speed** | 5 to 8 min per 8-min video on CPU | About 50s on our NVIDIA GPU |
 | **Clip AI provider** | Gemini or an OpenAI-compatible provider | Gemini included |
 | **Watermark / limits** | None, ever | Watermark and 20 min/mo on the free plan, neither on paid |
-| **Auto-posting** | Dashboard uses previously configured Upload-Post credentials only | Paid plans: connect TikTok, Instagram, YouTube, Facebook, LinkedIn, Threads and Bluesky once, post or schedule from the app |
+| **Auto-posting** | [Repliz from Gallery](#publish-from-gallery-with-repliz), or previously configured Upload-Post credentials | Paid plans: connect TikTok, Instagram, YouTube, Facebook, LinkedIn, Threads and Bluesky once, post or schedule from the app |
 | **Autopilot** | Not included | Paid plans: every new video on your channel becomes scheduled shorts |
 | **Setup** | Docker, 8GB+ RAM, model downloads | Sign in and paste a link |
 | **MCP / API for agents** | Same `/mcp` endpoint, but only while your machine is on | Always-on endpoint at [mcp.openshorts.app](https://www.openshorts.app/mcp), API keys in one click |
@@ -117,6 +117,32 @@ Add OpenShorts to Claude or ChatGPT with one URL and ask for clips in plain lang
 - On the Cloud it is wired up on every paid plan. The self-hosted dashboard no longer has a setup form for Upload-Post.
   Previously configured keys still work.
 - **Only want to post videos you already have, without clipping?** Use [Upload-Post](https://www.upload-post.com) directly: TikTok, Instagram, YouTube, LinkedIn, Facebook, X, Threads, Pinterest, Bluesky and more, with a free plan, a REST API and an MCP server
+
+### Publish from Gallery with Repliz
+
+On the same Windows computer as your private self-hosted Docker install, install
+Brave, Google Chrome, or Microsoft Edge and run:
+
+```powershell
+npm --prefix tools/repliz-browser ci
+npm --prefix tools/repliz-browser start
+```
+
+Keep that terminal open. Keep the dashboard and API bound to loopback
+(`OPENSHORTS_BIND_IP=127.0.0.1`), not behind a public proxy. Open the dashboard
+at `http://localhost:5175`, then choose **Prepare in Repliz** on a saved clip.
+If Repliz needs sign-in, the helper opens a normal browser window in a
+dedicated profile, without Playwright controlling the login. Sign in there,
+close that window, then click **Prepare in Repliz** again. The helper reuses
+that profile to attach the MP4 and pre-fill the caption (and title if shown).
+Select the destination in Repliz; the helper then clicks **Now**. Review the
+account and video and click **Save** yourself. Close that tab before preparing
+another clip.
+
+Uses Repliz's Premium browser composer, in English or Indonesian, up to
+150 MB per clip. No webhook, API keys, external bucket, or Storage add-on.
+Treat the local Chromium profile as a credential; do not copy or share it.
+For manual posting, use **Copy title** and **Download** in Gallery.
 
 ### AI Shorts Pipeline
 1. **Analyze**: Scrape website URL + web research, or generate from manual description
@@ -208,7 +234,7 @@ Self-hosting OpenShorts is free. You provide the machine and you only pay for th
 - **Clip Generator** needs a Gemini API key or an OpenAI-compatible provider. Visual analysis and Gemini-specific tools still use Gemini ([get a key](https://aistudio.google.com/app/apikey)).
 - **fal.ai API Key** ([Pay-per-use](https://fal.ai)) — required for AI Shorts (actor generation, video, lip-sync)
 - **ElevenLabs API Key** ([Free tier](https://elevenlabs.io)) — required for voiceover/dubbing
-- **Upload-Post API Key** ([free tier](https://upload-post.com)) — required for direct social posting
+- **Upload-Post API Key** ([free tier](https://upload-post.com)) — required only for publishing via Upload-Post
 
 ---
 

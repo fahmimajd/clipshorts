@@ -35,6 +35,10 @@
   `post_requires_plan` with an `upgrade_url`, and the response carries
   `free_posts_left` while it has some. Thumbnail and SaaSShorts publishing
   count too.
+- The self-hosted Repliz browser helper is a separate loopback Windows process.
+  It resolves the selected clip against `/api/local-gallery`, reads that MP4
+  from `/videos`, and prepares the post in Chromium. The user selects the
+  destination and saves in Repliz. No server-side Repliz publishing endpoint.
 - `POST /mcp`: MCP server (JSON-RPC), the pipeline as agent tools.
 - `POST/GET/DELETE /api/keys`: user API keys (cloud mode, session JWT only).
 - `DELETE /api/account`: erase the account and everything in it (GDPR art. 17).

@@ -101,6 +101,8 @@ CHILD_ENV_DENYLIST = frozenset({
     "GOOGLE_CLIENT_SECRET",
     "AGENTLEDGER_API_KEY",
     "MANAGED_UPLOAD_POST_API_KEY", "MANAGED_GEMINI_API_KEY", "UPLOAD_POST_API_KEY",
+    "REPLIZ_ACCESS_KEY", "REPLIZ_SECRET_KEY",
+    "REPLIZ_PRESIGNED_URL_ENDPOINT", "REPLIZ_PRESIGNED_URL_TOKEN",
     "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
     "OPENPANEL_CLIENT_SECRET", "ELEVENLABS_API_KEY",
@@ -6887,18 +6889,21 @@ def local_gallery():
     return {"videos": [video for _, videos in renders for video in videos]}
 
 
+def _local_same_origin(request):
+    # The self-host API has wildcard CORS; another page can't act on this instance.
+    site = request.headers.get("sec-fetch-site")
+    origin = request.headers.get("origin")
+    return site == "same-origin" or (
+        site is None and (origin is None or origin == str(request.base_url).rstrip("/"))
+    )
+
+
 @app.delete("/api/local-gallery/{job_id}")
 def delete_local_render(job_id: str, request: Request):
     if BILLING_ENABLED or not _is_uuid_id(job_id):
         raise HTTPException(status_code=404, detail="Render not found")
 
-    # The self-host API has wildcard CORS. A page on another origin must not
-    # be able to delete local renders even if it can read their IDs.
-    site = request.headers.get("sec-fetch-site")
-    origin = request.headers.get("origin")
-    if site not in (None, "same-origin") or (
-        site is None and origin is not None and origin != str(request.base_url).rstrip("/")
-    ):
+    if not _local_same_origin(request):
         raise HTTPException(status_code=403, detail="Open Gallery on the same origin to delete a render.")
 
     job_dir = os.path.join(OUTPUT_DIR, job_id)

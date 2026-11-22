@@ -18,6 +18,7 @@ uploads/
 downloads/
 videos/
 output/
+/tools/repliz-browser/node_modules/
 
 # OS / IDE
 .DS_Store

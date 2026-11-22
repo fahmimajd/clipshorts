@@ -31,6 +31,7 @@ export default function Modal({ isOpen, onClose, title, eyebrow, size = 'md', ch
       className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4 animate-fade"
       onMouseDown={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}
       role="dialog"
+      aria-label={title}
       aria-modal="true"
     >
       <div
